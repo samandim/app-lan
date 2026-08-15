@@ -1,0 +1,155 @@
+@import "tailwindcss";
+
+:root {
+  /* Light Mode Tokens */
+  --color-background: #F8FAFC;
+  --color-surface: #FFFFFF;
+  --color-surface-secondary: #F1F5F9;
+  --color-surface-tertiary: #E2E8F0;
+  --color-text-primary: #0F172A;
+  --color-text-secondary: #64748B;
+  --color-text-tertiary: #94A3B8;
+  --color-border: #E2E8F0;
+  --color-border-subtle: #F1F5F9;
+  
+  --color-accent: #4F46E5;
+  --color-accent-hover: #4338CA;
+  --color-accent-subtle: #EEF2FF;
+  --color-accent-text: #3730A3;
+
+  --color-success: #10B981;
+  --color-success-subtle: #ECFDF5;
+  --color-success-text: #065F46;
+
+  --color-warning: #F59E0B;
+  --color-warning-subtle: #FFFBEB;
+  --color-warning-text: #92400E;
+
+  --color-error: #EF4444;
+  --color-error-subtle: #FEF2F2;
+  --color-error-text: #991B1B;
+}
+
+.dark, [data-theme="dark"] {
+  /* Dark Mode Tokens */
+  --color-background: #0B1120;
+  --color-surface: #111827;
+  --color-surface-secondary: #1E293B;
+  --color-surface-tertiary: #334155;
+  --color-text-primary: #F8FAFC;
+  --color-text-secondary: #94A3B8;
+  --color-text-tertiary: #64748B;
+  --color-border: #334155;
+  --color-border-subtle: #1E293B;
+
+  --color-accent: #818CF8;
+  --color-accent-hover: #A5B4FC;
+  --color-accent-subtle: rgba(129, 140, 248, 0.14);
+  --color-accent-text: #C7D2FE;
+
+  --color-success: #34D399;
+  --color-success-subtle: rgba(52, 211, 153, 0.14);
+  --color-success-text: #6EE7B7;
+
+  --color-warning: #FBBF24;
+  --color-warning-subtle: rgba(251, 191, 36, 0.14);
+  --color-warning-text: #FDE68A;
+
+  --color-error: #F87171;
+  --color-error-subtle: rgba(248, 113, 113, 0.14);
+  --color-error-text: #FCA5A5;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Custom Semantic Utility Classes using Design Tokens */
+.bg-app-main {
+  background-color: var(--color-background);
+}
+
+.bg-surface-primary {
+  background-color: var(--color-surface);
+}
+
+.bg-surface-secondary {
+  background-color: var(--color-surface-secondary);
+}
+
+.bg-surface-tertiary {
+  background-color: var(--color-surface-tertiary);
+}
+
+.text-token-primary {
+  color: var(--color-text-primary);
+}
+
+.text-token-secondary {
+  color: var(--color-text-secondary);
+}
+
+.text-token-tertiary {
+  color: var(--color-text-tertiary);
+}
+
+.border-token {
+  border-color: var(--color-border);
+}
+
+.border-token-subtle {
+  border-color: var(--color-border-subtle);
+}
+
+.bg-accent-primary {
+  background-color: var(--color-accent);
+}
+
+.bg-accent-primary:hover {
+  background-color: var(--color-accent-hover);
+}
+
+.text-accent-primary {
+  color: var(--color-accent);
+}
+
+.bg-accent-subtle {
+  background-color: var(--color-accent-subtle);
+}
+
+.text-accent-token {
+  color: var(--color-accent-text);
+}
+
+.bg-success-subtle {
+  background-color: var(--color-success-subtle);
+}
+
+.text-success-token {
+  color: var(--color-success);
+}
+
+.bg-warning-subtle {
+  background-color: var(--color-warning-subtle);
+}
+
+.text-warning-token {
+  color: var(--color-warning);
+}
+
+.bg-error-subtle {
+  background-color: var(--color-error-subtle);
+}
+
+.text-error-token {
+  color: var(--color-error);
+}
+
+/* Smooth Focus Ring */
+.focus-ring-accent:focus-visible, .focus-ring-accent:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-surface), 0 0 0 4px var(--color-accent);
+}

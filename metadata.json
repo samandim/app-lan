@@ -1,0 +1,6 @@
+{
+  "name": "Adaptive English Learning",
+  "description": "A local-first adaptive English learning prototype that transforms user-provided text into tailored, time-flexible practice sessions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

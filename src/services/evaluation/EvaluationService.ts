@@ -14,13 +14,56 @@ import { ProductionStrategy } from './strategies/ProductionStrategy';
 import { SpeakingShadowingStrategy } from './strategies/SpeakingShadowingStrategy';
 
 export class EvaluationService {
+  private static multipleChoiceStrategy = new MultipleChoiceStrategy();
+  private static speakingShadowingStrategy = new SpeakingShadowingStrategy();
+  private static clozeRetrievalStrategy = new ClozeRetrievalStrategy();
+  private static implicitGrammarStrategy = new ImplicitGrammarStrategy();
+  private static productionStrategy = new ProductionStrategy();
+
   private static strategies: IEvaluationStrategy[] = [
-    new MultipleChoiceStrategy(),
-    new SpeakingShadowingStrategy(),
-    new ClozeRetrievalStrategy(),
-    new ImplicitGrammarStrategy(),
-    new ProductionStrategy()
+    EvaluationService.speakingShadowingStrategy,
+    EvaluationService.implicitGrammarStrategy,
+    EvaluationService.multipleChoiceStrategy,
+    EvaluationService.clozeRetrievalStrategy,
+    EvaluationService.productionStrategy
   ];
+
+  /**
+   * Resolves the exact pedagogical evaluation strategy based on exercise semantics.
+   */
+  public static resolveStrategy(exercise: Exercise): IEvaluationStrategy {
+    // 1. Spoken shadowing exercises MUST always route to SpeakingShadowingStrategy
+    if (exercise.type === 'speaking_shadowing') {
+      return this.speakingShadowingStrategy;
+    }
+
+    // 2. Implicit / explicit grammar drills route to ImplicitGrammarStrategy
+    if (exercise.type === 'implicit_grammar' || exercise.type === 'explicit_grammar_tip') {
+      return this.implicitGrammarStrategy;
+    }
+
+    // 3. Exercises with multiple choice options route to MultipleChoiceStrategy
+    if (this.multipleChoiceStrategy.canEvaluate(exercise)) {
+      return this.multipleChoiceStrategy;
+    }
+
+    // 4. Listening comprehension cloze routes to ClozeRetrievalStrategy
+    if (exercise.type === 'listening_comprehension') {
+      return this.clozeRetrievalStrategy;
+    }
+
+    // 5. Open sentence production vs Single-word cloze retrieval
+    if (this.productionStrategy.canEvaluate(exercise)) {
+      return this.productionStrategy;
+    }
+
+    if (this.clozeRetrievalStrategy.canEvaluate(exercise)) {
+      return this.clozeRetrievalStrategy;
+    }
+
+    // 6. Generic semantic fallback
+    return this.strategies.find((s) => s.canEvaluate(exercise)) || this.productionStrategy;
+  }
 
   /**
    * Dispatches the activity and response to the appropriate pedagogical evaluation strategy.
@@ -39,8 +82,8 @@ export class EvaluationService {
   }): Promise<EvaluationResult> {
     const { exercise } = params;
 
-    // Find the first strategy that claims ability to evaluate this exercise
-    const strategy = this.strategies.find((s) => s.canEvaluate(exercise)) || this.strategies[this.strategies.length - 1];
+    // Resolve strategy deterministically by exercise semantics
+    const strategy = this.resolveStrategy(exercise);
 
     const evalParams: EvaluationStrategyParams = {
       ...params,

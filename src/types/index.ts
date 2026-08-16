@@ -275,6 +275,7 @@ export interface Exercise {
   targetAssetTerm?: string;
   targetAssetType?: AssetType;
   isReviewItem?: boolean;
+  responseMode?: 'single_word' | 'sentence' | 'choice' | 'audio';
 }
 
 export interface SessionActivity {

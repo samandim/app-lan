@@ -300,14 +300,28 @@ Generate ${count} adaptive exercises from this text now.`;
 
     const response = await this.generateJson<{ exercises: Exercise[] }>(systemPrompt, userPrompt);
 
-    if (Array.isArray(response?.exercises) && response.exercises.length > 0) {
-      return response.exercises.map((ex, idx) => ({
-        ...ex,
-        id: ex.id || `ex_ollama_${idx}_${Date.now()}`
-      }));
+    const validExercises = Array.isArray(response?.exercises)
+      ? response.exercises
+          .filter((ex) => ex && typeof ex.prompt === 'string' && ex.prompt.trim().length > 0 && typeof ex.type === 'string')
+          .map((ex, idx) => ({
+            ...ex,
+            id: ex.id || `ex_ollama_${idx}_${Date.now()}`
+          }))
+      : [];
+
+    if (validExercises.length >= count) {
+      return validExercises.slice(0, count);
     }
 
-    throw new Error('Ollama returned empty exercises array');
+    if (validExercises.length > 0) {
+      // Pad remaining exercises with deterministic fallback to ensure exact requested count
+      const { HeuristicFallbackProvider } = await import('./HeuristicFallbackProvider');
+      const fallback = new HeuristicFallbackProvider();
+      const additional = await fallback.generateExercises(source, count - validExercises.length);
+      return [...validExercises, ...additional];
+    }
+
+    throw new Error('Ollama returned empty or malformed exercises array');
   }
 
   /**

@@ -6,10 +6,27 @@ export class ProductionStrategy implements IEvaluationStrategy {
   public readonly strategyName = 'production_open';
 
   public canEvaluate(exercise: import('../../../types').Exercise): boolean {
-    return (
-      (exercise.type === 'vocabulary_retrieval' || exercise.type === 'contextual_notice') &&
-      (!exercise.options || exercise.options.length === 0)
-    );
+    if (Array.isArray(exercise.options) && exercise.options.length > 0) {
+      return false;
+    }
+    if (
+      exercise.type === 'speaking_shadowing' ||
+      exercise.type === 'listening_comprehension' ||
+      exercise.type === 'implicit_grammar' ||
+      exercise.type === 'explicit_grammar_tip'
+    ) {
+      return false;
+    }
+    if (exercise.type === 'vocabulary_retrieval' || exercise.type === 'contextual_notice') {
+      const isSentenceProduction =
+        exercise.responseMode === 'sentence' ||
+        exercise.instruction?.toLowerCase().includes('produce') ||
+        exercise.instruction?.toLowerCase().includes('create a sentence') ||
+        exercise.prompt?.toLowerCase().includes('write a complete sentence') ||
+        (exercise.correctAnswer && exercise.correctAnswer.trim().split(/\s+/).length >= 4);
+      return Boolean(isSentenceProduction);
+    }
+    return true;
   }
 
   public async evaluate(params: EvaluationStrategyParams): Promise<EvaluationResult> {

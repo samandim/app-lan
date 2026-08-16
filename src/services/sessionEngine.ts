@@ -1,6 +1,7 @@
 import {
   Source,
   Exercise,
+  ExerciseType,
   SessionConfig,
   SessionPlan,
   SessionActivity,
@@ -160,7 +161,7 @@ export class SessionEngine {
     let strongWords: string[] = [];
 
     if (source) {
-      const categorized = LearningStateManager.categorizeSourceAssets(source);
+      const categorized = LearningStateManager.categorizeSourceAssets(source, activeLearningState);
       reviewWords = categorized.developing;
       newWords = categorized.newItems;
       strongWords = categorized.strong;
@@ -174,7 +175,8 @@ export class SessionEngine {
       : Math.min(3, reviewWords.length);
 
     const selectedReviewWords = reviewWords.slice(0, maxReviewCount);
-    const selectedNewWords = newWords.slice(0, Math.max(1, meta.exerciseCount - selectedReviewWords.length));
+    const availableNewSlots = Math.max(0, meta.exerciseCount - selectedReviewWords.length);
+    const selectedNewWords = newWords.slice(0, availableNewSlots);
     const targetVocab = [...selectedReviewWords, ...selectedNewWords];
 
     // 2. Goal Alignment & Skill Priority Calibration
@@ -298,8 +300,13 @@ export class SessionEngine {
       // Check scaffolding recommendation for review items
       let scaffoldingLevel: 'none' | 'contextual_support' | 'guided_options' = 'none';
       if (assignedTerm) {
-        scaffoldingLevel = LearningStateManager.getScaffoldingRecommendation(assignedTerm);
-        if (scaffoldingLevel === 'guided_options' && (!exercise.options || exercise.options.length === 0)) {
+        scaffoldingLevel = LearningStateManager.getScaffoldingRecommendation(assignedTerm, activeLearningState);
+        // Only inject guided multiple-choice options for exercise types designed for options
+        if (
+          scaffoldingLevel === 'guided_options' &&
+          (exercise.type === 'vocabulary_retrieval' || exercise.type === 'contextual_notice') &&
+          (!exercise.options || exercise.options.length === 0)
+        ) {
           // Provide scaffolded multiple choice options for repeated error recovery
           const correct = exercise.correctAnswer || assignedTerm;
           exercise.options = [
@@ -324,7 +331,7 @@ export class SessionEngine {
       if (isEndpoint) {
         selectionReason = `Checkpoint Endpoint: Evaluates mastery of the session primary objective ("${objective.title}")`;
       } else if (isReview) {
-        const asset = assignedTerm ? LearningStateManager.getAssetState(assignedTerm) : undefined;
+        const asset = assignedTerm ? LearningStateManager.getAssetState(assignedTerm, activeLearningState) : undefined;
         const failedCount = asset?.failedAttempts || 0;
         const errNote = failedCount > 0 ? ` with ${failedCount} past error${failedCount > 1 ? 's' : ''}` : '';
         selectionReason = `Adaptive Review: Reinforces developing asset "${assignedTerm}"${errNote} to consolidate neural retention`;
@@ -386,23 +393,191 @@ export class SessionEngine {
    * Fallback for standalone sessions (when source is null)
    */
   private static generateStandaloneExercises(count: number, level: EnglishLevel): Exercise[] {
-    const defaultSentences = [
-      'Deep focus accelerates linguistic pattern recognition and strengthens cognitive endurance.',
-      'Active retrieval produces significantly more durable neural memory traces than passive review.',
-      'Implicit syntactic structures are absorbed most effectively through repeated meaningful context.'
+    const standaloneBank: Array<{
+      type: ExerciseType;
+      instruction: string;
+      prompt: string;
+      options?: string[];
+      correctAnswer: string;
+      explanation: string;
+      audioText?: string;
+      highlightText?: string;
+      grammarInsight?: string;
+      targetAssetTerm?: string;
+      targetAssetType?: import('../types').AssetType;
+    }> = [
+      {
+        type: 'vocabulary_retrieval',
+        instruction: 'Vocabulary Retrieval & Context Mapping',
+        prompt: 'In the sentence below, identify the primary meaning and nuance of the term "endurance":\n\n"Deep focus accelerates linguistic pattern recognition and strengthens cognitive endurance."',
+        options: [
+          'The capacity to sustain prolonged effort and attention',
+          'A sudden loss of concentration under pressure',
+          'A temporary feeling of fatigue or boredom',
+          'The ability to memorize isolated words quickly'
+        ],
+        correctAnswer: 'The capacity to sustain prolonged effort and attention',
+        explanation: '"Endurance" refers to the ability to withstand hardship or prolonged cognitive effort.',
+        highlightText: 'endurance',
+        grammarInsight: 'Notice how "cognitive endurance" functions as a compound noun phrase.',
+        targetAssetTerm: 'endurance',
+        targetAssetType: 'vocabulary'
+      },
+      {
+        type: 'implicit_grammar',
+        instruction: 'Implicit Grammar & Flow Calibration',
+        prompt: 'The following sentence contains a subject-verb agreement mismatch. Restore its natural, fluent version:\n\n"Active retrieval produce significantly more durable neural memory traces than passive review."',
+        correctAnswer: 'Active retrieval produces significantly more durable neural memory traces than passive review.',
+        explanation: 'Singular abstract subjects (like "Active retrieval") take third-person singular verbs ("produces").',
+        grammarInsight: 'Third-person singular inflection "-s" applies to non-count abstract noun subjects.',
+        targetAssetTerm: 'Subject-Verb Concord',
+        targetAssetType: 'grammar_pattern'
+      },
+      {
+        type: 'listening_comprehension',
+        instruction: 'Aural Decoding & Phonemic Cloze',
+        prompt: 'Listen to the audio segment, then fill in the missing word in the transcription below:\n\n"Implicit syntactic structures are absorbed most effectively through repeated _______ context."',
+        audioText: 'Implicit syntactic structures are absorbed most effectively through repeated meaningful context.',
+        correctAnswer: 'meaningful',
+        explanation: 'Contextual immersion enables subconscious acquisition of grammatical patterns.',
+        highlightText: 'meaningful',
+        grammarInsight: 'Adjectives like "meaningful" modify the head noun "context".',
+        targetAssetTerm: 'meaningful',
+        targetAssetType: 'vocabulary'
+      },
+      {
+        type: 'speaking_shadowing',
+        instruction: 'Active Production & Shadowing Cadence',
+        prompt: 'Listen carefully to the segment, then read it aloud smoothly, matching the phrasing, rhythmic pauses, and natural intonation:\n\n"Consistent deliberate immersion transforms passive knowledge into spontaneous spoken fluency."',
+        audioText: 'Consistent deliberate immersion transforms passive knowledge into spontaneous spoken fluency.',
+        correctAnswer: 'shadowing_completed',
+        explanation: 'Shadowing trains speech motor coordination and bridges comprehension with active articulation.',
+        grammarInsight: 'Notice the thought groups: [Consistent deliberate immersion] [transforms passive knowledge] [into spontaneous spoken fluency].',
+        targetAssetTerm: 'spontaneous spoken fluency',
+        targetAssetType: 'phrase'
+      },
+      {
+        type: 'vocabulary_retrieval',
+        instruction: 'Vocabulary Retrieval & Context Mapping',
+        prompt: 'Identify the nuance of the term "cohesion" in communicative discourse:\n\n"Clear transitional markers establish logical cohesion between complex arguments."',
+        options: [
+          'The grammatical and lexical linking that holds a text together',
+          'A grammatical error that confuses the listener',
+          'An informal tone used in casual conversation',
+          'A rapid rate of speech without pauses'
+        ],
+        correctAnswer: 'The grammatical and lexical linking that holds a text together',
+        explanation: '"Cohesion" refers to the organizational unity and connective tissue of discourse.',
+        highlightText: 'cohesion',
+        grammarInsight: 'Transitional markers like "consequently" and "furthermore" provide discourse cohesion.',
+        targetAssetTerm: 'cohesion',
+        targetAssetType: 'vocabulary'
+      },
+      {
+        type: 'implicit_grammar',
+        instruction: 'Implicit Grammar & Flow Calibration',
+        prompt: 'The following sentence contains a prepositional error. Restore its natural, fluent version:\n\n"Fluent communicators adapt their register depending on the context in which they are speaking in."',
+        correctAnswer: 'Fluent communicators adapt their register depending on the context in which they are speaking.',
+        explanation: 'Avoid duplicating prepositions when fronting with "in which".',
+        grammarInsight: 'Relative clauses with preposition fronting ("in which they are speaking") do not repeat the preposition at the end.',
+        targetAssetTerm: 'Preposition Fronting',
+        targetAssetType: 'grammar_pattern'
+      },
+      {
+        type: 'listening_comprehension',
+        instruction: 'Aural Decoding & Phonemic Cloze',
+        prompt: 'Listen to the audio segment, then fill in the missing key word in the transcription below:\n\n"Accurate phonological awareness allows learners to distinguish subtle _______ in vowel length."',
+        audioText: 'Accurate phonological awareness allows learners to distinguish subtle nuances in vowel length.',
+        correctAnswer: 'nuances',
+        explanation: '"Nuances" denotes subtle distinctions or fine variations in sound or meaning.',
+        highlightText: 'nuances',
+        grammarInsight: 'The plural noun "nuances" acts as the direct object of "distinguish".',
+        targetAssetTerm: 'nuances',
+        targetAssetType: 'vocabulary'
+      },
+      {
+        type: 'speaking_shadowing',
+        instruction: 'Active Production & Shadowing Cadence',
+        prompt: 'Listen carefully to the segment, then read it aloud smoothly, matching the phrasing and rhythm:\n\n"When navigating unfamiliar discussions, asking clarifying questions demonstrates executive maturity."',
+        audioText: 'When navigating unfamiliar discussions, asking clarifying questions demonstrates executive maturity.',
+        correctAnswer: 'shadowing_completed',
+        explanation: 'Practicing complex introductory dependent clauses calibrates natural sentence intonation.',
+        grammarInsight: 'Introductory participial clauses ("When navigating...") take a slight rising pause before the main subject.',
+        targetAssetTerm: 'clarifying questions',
+        targetAssetType: 'phrase'
+      },
+      {
+        type: 'vocabulary_retrieval',
+        instruction: 'Vocabulary Retrieval & Context Mapping',
+        prompt: 'What is the precise contextual meaning of "articulate" in professional settings:\n\n"Leaders must articulate their strategic vision with clarity and conviction."',
+        options: [
+          'Express an idea clearly and effectively in speech or writing',
+          'Hesitate frequently when speaking to an audience',
+          'Memorize a prepared script word for word',
+          'Speak loudly to dominate a conversation'
+        ],
+        correctAnswer: 'Express an idea clearly and effectively in speech or writing',
+        explanation: '"Articulate" as a verb means to express fluently, distinctly, and coherently.',
+        highlightText: 'articulate',
+        grammarInsight: 'The modal auxiliary "must" is followed by base verb "articulate".',
+        targetAssetTerm: 'articulate',
+        targetAssetType: 'vocabulary'
+      },
+      {
+        type: 'implicit_grammar',
+        instruction: 'Implicit Grammar & Flow Calibration',
+        prompt: 'Correct the subtle tense and aspect error in this sentence:\n\n"Since several decades, researchers studied how immersion impacts neural plasticity."',
+        correctAnswer: 'For several decades, researchers have studied how immersion impacts neural plasticity.',
+        explanation: 'Duration with ongoing relevance uses "For" + present perfect ("have studied").',
+        grammarInsight: '"For [duration]" pairs with present perfect when an action began in the past and continues to the present.',
+        targetAssetTerm: 'Present Perfect Aspect',
+        targetAssetType: 'grammar_pattern'
+      },
+      {
+        type: 'listening_comprehension',
+        instruction: 'Aural Decoding & Phonemic Cloze',
+        prompt: 'Listen to the audio segment, then fill in the missing word:\n\n"Active recall builds stronger cognitive _______ than passive recognition."',
+        audioText: 'Active recall builds stronger cognitive connections than passive recognition.',
+        correctAnswer: 'connections',
+        explanation: 'Acoustic decoding reinforces orthographic representations in memory.',
+        highlightText: 'connections',
+        grammarInsight: 'Comparative structures: "stronger [noun] than [noun]".',
+        targetAssetTerm: 'connections',
+        targetAssetType: 'vocabulary'
+      },
+      {
+        type: 'speaking_shadowing',
+        instruction: 'Active Production & Shadowing Cadence',
+        prompt: 'Shadow this closing synthesis sentence with confident cadence and rhythm:\n\n"Mastering language is not about memorizing rules, but about developing intuitive confidence through continuous deliberate practice."',
+        audioText: 'Mastering language is not about memorizing rules, but about developing intuitive confidence through continuous deliberate practice.',
+        correctAnswer: 'shadowing_completed',
+        explanation: 'Parallel contrastive phrasing ("not about X, but about Y") creates powerful communicative flow.',
+        grammarInsight: 'Parallel correlative structures maintain the same grammatical form across both clauses ("about memorizing... about developing...").',
+        targetAssetTerm: 'intuitive confidence',
+        targetAssetType: 'phrase'
+      }
     ];
 
-    return defaultSentences.slice(0, count).map((s, idx) => ({
-      id: `ex_std_${idx}_${Date.now()}`,
-      type: idx === 0 ? 'vocabulary_retrieval' : idx === 1 ? 'implicit_grammar' : 'speaking_shadowing',
-      instruction: idx === 0 ? 'Contextual Vocabulary Notice' : idx === 1 ? 'Implicit Grammar Harmony' : 'Speech Shadowing Cadence',
-      prompt: s,
-      options: idx === 0 ? ['Key concept', 'Unrelated opposite', 'Filler phrase', 'Antonym'] : undefined,
-      correctAnswer: s,
-      explanation: 'Active practice updates implicit statistical expectations of English sentence rhythm.',
-      audioText: s,
-      grammarInsight: 'Notice the natural flow and subject-verb harmony.'
-    }));
+    const exercises: Exercise[] = [];
+    for (let i = 0; i < count; i++) {
+      const template = standaloneBank[i % standaloneBank.length];
+      exercises.push({
+        id: `ex_std_${i}_${Date.now()}`,
+        type: template.type,
+        instruction: template.instruction,
+        prompt: template.prompt,
+        options: template.options ? [...template.options] : undefined,
+        correctAnswer: template.correctAnswer,
+        explanation: template.explanation,
+        audioText: template.audioText,
+        highlightText: template.highlightText,
+        grammarInsight: template.grammarInsight,
+        targetAssetTerm: template.targetAssetTerm,
+        targetAssetType: template.targetAssetType
+      });
+    }
+
+    return exercises;
   }
 
   /**

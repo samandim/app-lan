@@ -5,7 +5,14 @@ export class MultipleChoiceStrategy implements IEvaluationStrategy {
   public readonly strategyName = 'multiple_choice';
 
   public canEvaluate(exercise: import('../../../types').Exercise): boolean {
-    return Array.isArray(exercise.options) && exercise.options.length > 0;
+    return (
+      Array.isArray(exercise.options) &&
+      exercise.options.length > 0 &&
+      exercise.type !== 'speaking_shadowing' &&
+      exercise.type !== 'implicit_grammar' &&
+      exercise.type !== 'explicit_grammar_tip' &&
+      exercise.type !== 'listening_comprehension'
+    );
   }
 
   public async evaluate(params: EvaluationStrategyParams): Promise<EvaluationResult> {

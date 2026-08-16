@@ -236,22 +236,29 @@ export const SpeakingShadowingCard: React.FC<SpeakingShadowingCardProps> = ({
         >
           {targetTerm ? (
             <span>
-              {referenceSentence.split(new RegExp(`(${targetTerm})`, 'gi')).map((part, i) =>
-                part.toLowerCase() === targetTerm.toLowerCase() ? (
-                  <strong
-                    key={i}
-                    className="px-1.5 py-0.5 rounded-md font-bold"
-                    style={{
-                      backgroundColor: 'var(--color-accent-subtle)',
-                      color: 'var(--color-accent)'
-                    }}
-                  >
-                    {part}
-                  </strong>
-                ) : (
-                  part
-                )
-              )}
+              {(() => {
+                try {
+                  const escapedTerm = targetTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  return referenceSentence.split(new RegExp(`(${escapedTerm})`, 'gi')).map((part, i) =>
+                    part.toLowerCase() === targetTerm.toLowerCase() ? (
+                      <strong
+                        key={i}
+                        className="px-1.5 py-0.5 rounded-md font-bold"
+                        style={{
+                          backgroundColor: 'var(--color-accent-subtle)',
+                          color: 'var(--color-accent)'
+                        }}
+                      >
+                        {part}
+                      </strong>
+                    ) : (
+                      part
+                    )
+                  );
+                } catch {
+                  return referenceSentence;
+                }
+              })()}
             </span>
           ) : (
             referenceSentence

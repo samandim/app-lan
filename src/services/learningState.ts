@@ -89,17 +89,17 @@ export class LearningStateManager {
     LocalRepository.resetLearningState();
   }
 
-  public static getAssetState(term: string): AssetState | undefined {
+  public static getAssetState(term: string, stateOverride?: LearningState | null): AssetState | undefined {
     const key = this.normalizeTerm(term);
-    const state = this.getLearningState();
+    const state = stateOverride || this.getLearningState();
     return state.assetStates[key];
   }
 
   /**
    * Identifies developing or weak assets that are high-priority candidates for review.
    */
-  public static getDevelopingAssets(): AssetState[] {
-    const state = this.getLearningState();
+  public static getDevelopingAssets(stateOverride?: LearningState | null): AssetState[] {
+    const state = stateOverride || this.getLearningState();
     return Object.values(state.assetStates).filter(
       a => a.status === 'developing' || a.lastPerformance === 'incorrect' || (a.status === 'new' && a.exposureCount > 0)
     );
@@ -108,8 +108,8 @@ export class LearningStateManager {
   /**
    * Identifies strong assets for maintenance or passive exposure.
    */
-  public static getStrongAssets(): AssetState[] {
-    const state = this.getLearningState();
+  public static getStrongAssets(stateOverride?: LearningState | null): AssetState[] {
+    const state = stateOverride || this.getLearningState();
     return Object.values(state.assetStates).filter(a => a.status === 'strong');
   }
 
@@ -117,12 +117,12 @@ export class LearningStateManager {
    * Analyzes a source's vocabulary and phrases against existing Learning State,
    * categorizing them into developing (review), new (unpracticed), and strong.
    */
-  public static categorizeSourceAssets(source: Source): {
+  public static categorizeSourceAssets(source: Source, stateOverride?: LearningState | null): {
     developing: string[];
     newItems: string[];
     strong: string[];
   } {
-    const state = this.getLearningState();
+    const state = stateOverride || this.getLearningState();
     const developing: string[] = [];
     const newItems: string[] = [];
     const strong: string[] = [];
@@ -159,8 +159,8 @@ export class LearningStateManager {
   /**
    * Recommends scaffolding level for an asset based on historical failure density.
    */
-  public static getScaffoldingRecommendation(term: string): 'none' | 'contextual_support' | 'guided_options' {
-    const asset = this.getAssetState(term);
+  public static getScaffoldingRecommendation(term: string, stateOverride?: LearningState | null): 'none' | 'contextual_support' | 'guided_options' {
+    const asset = this.getAssetState(term, stateOverride);
     if (!asset) return 'none';
     if ((asset.consecutiveErrors || 0) >= 2 || asset.failedAttempts >= 3) {
       return 'guided_options';

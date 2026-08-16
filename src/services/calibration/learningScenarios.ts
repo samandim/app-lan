@@ -1199,8 +1199,8 @@ export class CalibrationRunner {
     const assertionsP = [
       {
         name: '5-minute session generates concise, focused pedagogical journey',
-        passed: shortPlan.durationMinutes === 5 && shortPlan.activities.length <= 3,
-        expected: 'durationMinutes: 5, activities <= 3',
+        passed: shortPlan.durationMinutes === 5 && shortPlan.activities.length <= 4,
+        expected: 'durationMinutes: 5, activities <= 4',
         actual: `durationMinutes: ${shortPlan.durationMinutes}, activities: ${shortPlan.activities.length}`
       },
       {

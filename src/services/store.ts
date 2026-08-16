@@ -26,6 +26,43 @@ const STORAGE_KEY_LANGUAGE = 'adaptive_english_lang_v1';
 const STORAGE_KEY_ONBOARDING_DRAFT = 'adaptive_english_onboarding_draft_v1';
 const STORAGE_KEY_LEARNING_STATE = 'adaptive_english_learning_state_v1';
 
+class MemoryStorage {
+  private store: Map<string, string> = new Map();
+  public getItem(key: string): string | null {
+    return this.store.get(key) ?? null;
+  }
+  public setItem(key: string, value: string): void {
+    this.store.set(key, String(value));
+  }
+  public removeItem(key: string): void {
+    this.store.delete(key);
+  }
+  public clear(): void {
+    this.store.clear();
+  }
+}
+
+const memoryStorageFallback = new MemoryStorage();
+
+function getStorage(): {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+  removeItem: (key: string) => void;
+  clear?: () => void;
+} {
+  try {
+    if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+      return window.localStorage;
+    }
+    if (typeof globalThis !== 'undefined' && typeof (globalThis as any).localStorage !== 'undefined') {
+      return (globalThis as any).localStorage;
+    }
+  } catch {
+    // Access denied or restricted
+  }
+  return memoryStorageFallback;
+}
+
 export class LocalRepository {
   private static isInitialized = false;
 
@@ -46,15 +83,15 @@ export class LocalRepository {
    */
   private static safeGetJson<T>(key: string, fallback: T): T {
     try {
-      const raw = localStorage.getItem(key);
+      const raw = getStorage().getItem(key);
       if (!raw) return fallback;
       return JSON.parse(raw) as T;
     } catch (e) {
       console.warn(`[LocalRepository] Corrupted JSON detected for key "${key}". Preserving backup...`, e);
       try {
-        const raw = localStorage.getItem(key);
+        const raw = getStorage().getItem(key);
         if (raw) {
-          localStorage.setItem(`${key}_corrupt_bak_${Date.now()}`, raw);
+          getStorage().setItem(`${key}_corrupt_bak_${Date.now()}`, raw);
         }
       } catch {
         // Ignore backup failure in restricted environments
@@ -85,7 +122,7 @@ export class LocalRepository {
           profile: existingProfile,
           schemaVersion: CURRENT_SCHEMA_VERSION
         };
-        localStorage.setItem(STORAGE_KEY_LEARNER, JSON.stringify(learner));
+        getStorage().setItem(STORAGE_KEY_LEARNER, JSON.stringify(learner));
 
         // Migrate Sources: associate existing sources with this learnerId
         const sources = this.getSources();
@@ -94,7 +131,7 @@ export class LocalRepository {
             ...s,
             learnerId: s.learnerId || newLearnerId
           }));
-          localStorage.setItem(STORAGE_KEY_SOURCES, JSON.stringify(updatedSources));
+          getStorage().setItem(STORAGE_KEY_SOURCES, JSON.stringify(updatedSources));
         }
 
         // Migrate Sessions: associate existing session summaries with this learnerId
@@ -104,20 +141,20 @@ export class LocalRepository {
             ...s,
             learnerId: s.learnerId || newLearnerId
           }));
-          localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(updatedSessions));
+          getStorage().setItem(STORAGE_KEY_SESSIONS, JSON.stringify(updatedSessions));
         }
 
         // Migrate Learning State: replace 'local_learner' with learnerId
         const learningState = this.getLearningState();
         if (learningState) {
           learningState.learnerId = newLearnerId;
-          localStorage.setItem(STORAGE_KEY_LEARNING_STATE, JSON.stringify(learningState));
+          getStorage().setItem(STORAGE_KEY_LEARNING_STATE, JSON.stringify(learningState));
         }
 
-        localStorage.setItem(STORAGE_KEY_SCHEMA_VERSION, String(CURRENT_SCHEMA_VERSION));
+        getStorage().setItem(STORAGE_KEY_SCHEMA_VERSION, String(CURRENT_SCHEMA_VERSION));
       } else if (learner) {
         // Synchronize schema version
-        localStorage.setItem(STORAGE_KEY_SCHEMA_VERSION, String(CURRENT_SCHEMA_VERSION));
+        getStorage().setItem(STORAGE_KEY_SCHEMA_VERSION, String(CURRENT_SCHEMA_VERSION));
       }
     } catch (e) {
       console.error('[LocalRepository] Initialization error:', e);
@@ -149,10 +186,10 @@ export class LocalRepository {
     };
 
     try {
-      localStorage.setItem(STORAGE_KEY_LEARNER, JSON.stringify(newLearner));
-      localStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(newLearner.profile));
-      localStorage.setItem(STORAGE_KEY_LANGUAGE, newLearner.profile.interfaceLanguage);
-      localStorage.setItem(STORAGE_KEY_SCHEMA_VERSION, String(CURRENT_SCHEMA_VERSION));
+      getStorage().setItem(STORAGE_KEY_LEARNER, JSON.stringify(newLearner));
+      getStorage().setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(newLearner.profile));
+      getStorage().setItem(STORAGE_KEY_LANGUAGE, newLearner.profile.interfaceLanguage);
+      getStorage().setItem(STORAGE_KEY_SCHEMA_VERSION, String(CURRENT_SCHEMA_VERSION));
     } catch (e) {
       console.error('[LocalRepository] Failed to save new learner:', e);
     }
@@ -183,9 +220,9 @@ export class LocalRepository {
     };
 
     try {
-      localStorage.setItem(STORAGE_KEY_LEARNER, JSON.stringify(updatedLearner));
-      localStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(updatedProfile));
-      localStorage.setItem(STORAGE_KEY_LANGUAGE, updatedProfile.interfaceLanguage);
+      getStorage().setItem(STORAGE_KEY_LEARNER, JSON.stringify(updatedLearner));
+      getStorage().setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(updatedProfile));
+      getStorage().setItem(STORAGE_KEY_LANGUAGE, updatedProfile.interfaceLanguage);
     } catch (e) {
       console.error('[LocalRepository] Failed to update learner:', e);
     }
@@ -238,17 +275,17 @@ export class LocalRepository {
         updatedAt: now
       };
       try {
-        localStorage.setItem(STORAGE_KEY_LEARNER, JSON.stringify(updatedLearner));
+        getStorage().setItem(STORAGE_KEY_LEARNER, JSON.stringify(updatedLearner));
       } catch (e) {
         console.error('[LocalRepository] Failed to sync updated profile to learner:', e);
       }
     }
 
     try {
-      localStorage.setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(updated));
-      localStorage.setItem(STORAGE_KEY_LANGUAGE, updated.interfaceLanguage);
+      getStorage().setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(updated));
+      getStorage().setItem(STORAGE_KEY_LANGUAGE, updated.interfaceLanguage);
     } catch (e) {
-      console.error('[LocalRepository] Failed to save user profile to localStorage:', e);
+      console.error('[LocalRepository] Failed to save user profile to storage:', e);
     }
     return updated;
   }
@@ -337,9 +374,9 @@ export class LocalRepository {
 
     const updated = [newSource, ...allSources];
     try {
-      localStorage.setItem(STORAGE_KEY_SOURCES, JSON.stringify(updated));
+      getStorage().setItem(STORAGE_KEY_SOURCES, JSON.stringify(updated));
     } catch (e) {
-      console.error('[LocalRepository] Failed to save source to localStorage:', e);
+      console.error('[LocalRepository] Failed to save source to storage:', e);
     }
     return newSource;
   }
@@ -372,7 +409,7 @@ export class LocalRepository {
 
     sources[index] = updatedSource;
     try {
-      localStorage.setItem(STORAGE_KEY_SOURCES, JSON.stringify(sources));
+      getStorage().setItem(STORAGE_KEY_SOURCES, JSON.stringify(sources));
     } catch (e) {
       console.error('[LocalRepository] Failed to update source:', e);
     }
@@ -394,7 +431,7 @@ export class LocalRepository {
     const sources = this.safeGetJson<Source[]>(STORAGE_KEY_SOURCES, []);
     const filtered = sources.filter(s => s.id !== id);
     try {
-      localStorage.setItem(STORAGE_KEY_SOURCES, JSON.stringify(filtered));
+      getStorage().setItem(STORAGE_KEY_SOURCES, JSON.stringify(filtered));
       return true;
     } catch {
       return false;
@@ -419,7 +456,7 @@ export class LocalRepository {
 
       const history = this.getSessionHistory();
       const updated = [taggedSummary, ...history].slice(0, 50); // keep last 50
-      localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(updated));
+      getStorage().setItem(STORAGE_KEY_SESSIONS, JSON.stringify(updated));
     } catch (e) {
       console.error('[LocalRepository] Failed to save session history:', e);
     }
@@ -474,7 +511,7 @@ export class LocalRepository {
         lastSavedAt: Date.now()
       };
 
-      localStorage.setItem(STORAGE_KEY_ACTIVE_SESSION, JSON.stringify(record));
+      getStorage().setItem(STORAGE_KEY_ACTIVE_SESSION, JSON.stringify(record));
     } catch (e) {
       console.error('[LocalRepository] Failed to save active session:', e);
     }
@@ -482,7 +519,7 @@ export class LocalRepository {
 
   public static clearActiveSession(): void {
     try {
-      localStorage.removeItem(STORAGE_KEY_ACTIVE_SESSION);
+      getStorage().removeItem(STORAGE_KEY_ACTIVE_SESSION);
     } catch (e) {
       console.error('[LocalRepository] Failed to clear active session:', e);
     }
@@ -494,7 +531,7 @@ export class LocalRepository {
 
   public static getInterfaceLanguage(): InterfaceLanguage | null {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY_LANGUAGE) as InterfaceLanguage | null;
+      const saved = getStorage().getItem(STORAGE_KEY_LANGUAGE) as InterfaceLanguage | null;
       if (saved === 'en' || saved === 'fa') {
         return saved;
       }
@@ -506,9 +543,9 @@ export class LocalRepository {
 
   public static setInterfaceLanguage(lang: InterfaceLanguage): void {
     try {
-      localStorage.setItem(STORAGE_KEY_LANGUAGE, lang);
+      getStorage().setItem(STORAGE_KEY_LANGUAGE, lang);
     } catch (e) {
-      console.error('[LocalRepository] Failed to save language to localStorage:', e);
+      console.error('[LocalRepository] Failed to save language to storage:', e);
     }
   }
 
@@ -518,7 +555,7 @@ export class LocalRepository {
 
   public static saveOnboardingDraft(draft: OnboardingDraft): void {
     try {
-      localStorage.setItem(STORAGE_KEY_ONBOARDING_DRAFT, JSON.stringify(draft));
+      getStorage().setItem(STORAGE_KEY_ONBOARDING_DRAFT, JSON.stringify(draft));
     } catch (e) {
       console.error('[LocalRepository] Failed to save onboarding draft:', e);
     }
@@ -526,7 +563,7 @@ export class LocalRepository {
 
   public static clearOnboardingDraft(): void {
     try {
-      localStorage.removeItem(STORAGE_KEY_ONBOARDING_DRAFT);
+      getStorage().removeItem(STORAGE_KEY_ONBOARDING_DRAFT);
     } catch (e) {
       console.error('[LocalRepository] Failed to clear onboarding draft:', e);
     }
@@ -616,7 +653,7 @@ export class LocalRepository {
         ...state,
         learnerId: currentLearnerId
       };
-      localStorage.setItem(STORAGE_KEY_LEARNING_STATE, JSON.stringify(updatedState));
+      getStorage().setItem(STORAGE_KEY_LEARNING_STATE, JSON.stringify(updatedState));
     } catch (e) {
       console.error('[LocalRepository] Failed to save learning state:', e);
     }
@@ -624,7 +661,7 @@ export class LocalRepository {
 
   public static resetLearningState(): void {
     try {
-      localStorage.removeItem(STORAGE_KEY_LEARNING_STATE);
+      getStorage().removeItem(STORAGE_KEY_LEARNING_STATE);
     } catch (e) {
       console.error('[LocalRepository] Failed to reset learning state:', e);
     }
@@ -636,14 +673,14 @@ export class LocalRepository {
 
   public static resetAllLearnerData(): void {
     try {
-      localStorage.removeItem(STORAGE_KEY_LEARNER);
-      localStorage.removeItem(STORAGE_KEY_USER_PROFILE);
-      localStorage.removeItem(STORAGE_KEY_SOURCES);
-      localStorage.removeItem(STORAGE_KEY_SESSIONS);
-      localStorage.removeItem(STORAGE_KEY_LEARNING_STATE);
-      localStorage.removeItem(STORAGE_KEY_ACTIVE_SESSION);
-      localStorage.removeItem(STORAGE_KEY_ONBOARDING_DRAFT);
-      localStorage.removeItem(STORAGE_KEY_LANGUAGE);
+      getStorage().removeItem(STORAGE_KEY_LEARNER);
+      getStorage().removeItem(STORAGE_KEY_USER_PROFILE);
+      getStorage().removeItem(STORAGE_KEY_SOURCES);
+      getStorage().removeItem(STORAGE_KEY_SESSIONS);
+      getStorage().removeItem(STORAGE_KEY_LEARNING_STATE);
+      getStorage().removeItem(STORAGE_KEY_ACTIVE_SESSION);
+      getStorage().removeItem(STORAGE_KEY_ONBOARDING_DRAFT);
+      getStorage().removeItem(STORAGE_KEY_LANGUAGE);
       this.isInitialized = false;
     } catch (e) {
       console.error('[LocalRepository] Failed to reset all learner data:', e);
@@ -657,3 +694,4 @@ export class LocalRepository {
     this.resetAllLearnerData();
   }
 }
+

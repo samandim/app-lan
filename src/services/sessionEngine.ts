@@ -226,7 +226,9 @@ export class SessionEngine {
       objectiveTitle = `Internalize "${targetVocab.slice(0, 3).join(', ')}" and calibrate natural sentence flow`;
       objectiveDesc = `Structured ${durationMinutes}-minute learning journey designed to anchor target vocabulary, calibrate implicit grammatical intuition, and practice active speech production${goalContextSuffix}`;
     } else {
-      objectiveTitle = `Master foundational comprehension and active production from "${sourceTitle}"`;
+      objectiveTitle = source
+        ? `Master foundational comprehension and active production from "${sourceTitle}"`
+        : `Master foundational comprehension, implicit grammar, and active spoken production`;
       objectiveDesc = `Complete a structured ${durationMinutes}-minute learning journey designed to anchor contextual patterns and practice active speech production${goalContextSuffix}`;
     }
 
@@ -353,10 +355,22 @@ export class SessionEngine {
         objectiveRef: objective.id,
         exercise,
         isReviewItem: isReview,
-        targetAssetTerm: assignedTerm,
+        targetAssetTerm: assignedTerm || exercise.targetAssetTerm,
         selectionReason
       };
     });
+
+    // Ensure objective.targetItems strictly reflects the assets actually utilized in this session
+    const activityAssetTerms = Array.from(
+      new Set(
+        activities
+          .map(a => a.targetAssetTerm || a.exercise.targetAssetTerm)
+          .filter((t): t is string => Boolean(t && t.trim().length > 0))
+      )
+    );
+    if (activityAssetTerms.length > 0) {
+      objective.targetItems = activityAssetTerms;
+    }
 
     // 7. Target Outcomes
     const targetOutcomes = [

@@ -8,7 +8,15 @@ import {
   AssetStateUpdateResult,
   SessionSummary,
   SessionResultItem,
-  Source
+  Source,
+  ErrorCategory,
+  ErrorRecord,
+  ErrorMemoryState,
+  LearnerModel,
+  LearningEvent,
+  ExerciseType,
+  PedagogicalStage,
+  EvaluationStatus
 } from '../types';
 import { LocalRepository } from './store';
 
@@ -18,6 +26,22 @@ export class LearningStateManager {
       .toLowerCase()
       .trim()
       .replace(/^[^\w\s]+|[^\w\s]+$/g, '');
+  }
+
+  public static classifyErrorCategory(exerciseType: ExerciseType, skill: SkillType, _issues?: string[]): ErrorCategory {
+    if (exerciseType === 'speaking_shadowing' || skill === 'speaking') {
+      return 'speaking';
+    }
+    if (exerciseType === 'listening_comprehension' || exerciseType === 'checkpoint_verify' || skill === 'comprehension') {
+      return 'comprehension';
+    }
+    if (exerciseType === 'implicit_grammar' || exerciseType === 'explicit_grammar_tip' || skill === 'grammar') {
+      return 'grammatical';
+    }
+    if (exerciseType === 'vocabulary_retrieval' || skill === 'vocabulary') {
+      return 'lexical';
+    }
+    return 'unknown';
   }
 
   public static getInitialSkillStates(): Record<SkillType, SkillState> {
@@ -87,6 +111,26 @@ export class LearningStateManager {
 
   public static resetLearningState(): void {
     LocalRepository.resetLearningState();
+  }
+
+  public static getLearnerModel(learnerId?: string): LearnerModel | null {
+    return LocalRepository.getLearnerModel(learnerId);
+  }
+
+  public static saveLearnerModel(model: LearnerModel): void {
+    LocalRepository.saveLearnerModel(model);
+  }
+
+  public static getErrorMemory(learnerId?: string): ErrorMemoryState {
+    return LocalRepository.getErrorMemory(learnerId);
+  }
+
+  public static getLearningEvents(learnerId?: string, limit = 100): LearningEvent[] {
+    return LocalRepository.getLearningEvents(learnerId, limit);
+  }
+
+  public static recordLearningEvent(event: LearningEvent): void {
+    LocalRepository.recordLearningEvent(event);
   }
 
   public static getAssetState(term: string, stateOverride?: LearningState | null): AssetState | undefined {
@@ -180,8 +224,10 @@ export class LearningStateManager {
     changes: AssetStateUpdateResult[];
   } {
     const state = this.getLearningState();
+    const learnerId = summary.learnerId || state.learnerId || LocalRepository.getLearner()?.id || 'learner_default';
     const now = Date.now();
     const changes: AssetStateUpdateResult[] = [];
+    const generatedEvents: LearningEvent[] = [];
 
     // Track skill performances in this session
     const sessionSkillMetrics: Record<SkillType, { attempts: number; correct: number }> = {
@@ -191,7 +237,7 @@ export class LearningStateManager {
       speaking: { attempts: 0, correct: 0 }
     };
 
-    summary.items.forEach((item: SessionResultItem) => {
+    summary.items.forEach((item: SessionResultItem, itemIdx: number) => {
       const ex = item.exercise;
 
       // Determine Skill Type
@@ -227,8 +273,94 @@ export class LearningStateManager {
         targetTerm = ex.correctAnswer;
       }
 
+      const unassisted = item.evidence?.unassistedSuccess ?? (item.isCorrect && !item.grammarRequested);
+      const recovered = item.evidence?.recoveredAfterFeedback ?? false;
+      const hintsUsed = (item.evidence?.hintsUsedCount ?? 0) > 0 || item.grammarRequested;
+
+      let performance: 'correct' | 'incorrect' | 'assisted' = 'correct';
+      if (!item.isCorrect) {
+        performance = 'incorrect';
+      } else if (recovered || hintsUsed || !unassisted) {
+        performance = 'assisted';
+      } else {
+        performance = 'correct';
+      }
+
+      // Classify error and record error record if failed
+      if (!item.isCorrect) {
+        const errorCategory = this.classifyErrorCategory(ex.type, skill);
+        LocalRepository.recordError({
+          learnerId,
+          assetId: targetTerm ? this.normalizeTerm(targetTerm) : undefined,
+          assetTerm: targetTerm,
+          assetType,
+          sessionId: summary.id,
+          sourceId: summary.sourceId,
+          activityId: item.activityId || `act_${itemIdx}`,
+          exerciseId: ex.id,
+          exerciseType: ex.type,
+          errorCategory,
+          learnerResponse: item.userAnswer,
+          expectedAnswer: ex.correctAnswer,
+          feedbackMessage: item.activityResult?.finalEvaluation?.feedback?.message,
+          unassisted: false,
+          attemptsCount: item.evidence?.attemptsCount || 1,
+          timestamp: now
+        });
+      }
+
+      // Generate Exercise Completed Event
+      generatedEvents.push({
+        id: LocalRepository.generateStableId('evt'),
+        type: 'exercise_completed',
+        timestamp: now,
+        learnerId,
+        sessionId: summary.id,
+        sourceId: summary.sourceId,
+        assetId: targetTerm ? this.normalizeTerm(targetTerm) : undefined,
+        skill,
+        schemaVersion: 3,
+        payload: {
+          sessionId: summary.id,
+          activityId: item.activityId || `act_${itemIdx}`,
+          exerciseId: ex.id,
+          exerciseType: ex.type,
+          stage: item.stage || 'active_retrieval',
+          isCorrect: item.isCorrect,
+          score: item.activityResult?.finalEvaluation?.score !== undefined ? Math.round(item.activityResult.finalEvaluation.score * 100) : (item.isCorrect ? 100 : 0),
+          unassisted,
+          attemptsCount: item.evidence?.attemptsCount || 1,
+          timeSpentSeconds: item.timeSpentSeconds || 0,
+          targetAssetTerm: targetTerm,
+          targetAssetType: assetType
+        }
+      });
+
+      // Generate Speaking Attempt Event if speaking
+      if (ex.type === 'speaking_shadowing') {
+        generatedEvents.push({
+          id: LocalRepository.generateStableId('evt'),
+          type: 'speaking_attempt',
+          timestamp: now,
+          learnerId,
+          sessionId: summary.id,
+          sourceId: summary.sourceId,
+          skill: 'speaking',
+          schemaVersion: 3,
+          payload: {
+            sessionId: summary.id,
+            exerciseId: ex.id,
+            targetText: ex.prompt || ex.correctAnswer || '',
+            transcript: item.userAnswer,
+            durationMs: item.timeSpentSeconds ? item.timeSpentSeconds * 1000 : undefined,
+            evaluationAvailable: true,
+            quality: (item.isCorrect ? 'strong' : 'developing') as EvaluationStatus
+          }
+        });
+      }
+
       if (!targetTerm) {
-        // If still none, skip asset-level tracking for this exercise
+        // If no target term, skip asset-level state tracking for this exercise
         return;
       }
 
@@ -253,20 +385,6 @@ export class LearningStateManager {
       };
 
       const previousStatus = existing.status;
-
-      // Classify performance leveraging rich PerformanceEvidence from Phase 5
-      const unassisted = item.evidence?.unassistedSuccess ?? (item.isCorrect && !item.grammarRequested);
-      const recovered = item.evidence?.recoveredAfterFeedback ?? false;
-      const hintsUsed = (item.evidence?.hintsUsedCount ?? 0) > 0 || item.grammarRequested;
-
-      let performance: 'correct' | 'incorrect' | 'assisted' = 'correct';
-      if (!item.isCorrect) {
-        performance = 'incorrect';
-      } else if (recovered || hintsUsed || !unassisted) {
-        performance = 'assisted';
-      } else {
-        performance = 'correct';
-      }
 
       // Apply deterministic counter rules
       const newExposure = existing.exposureCount + 1;
@@ -354,6 +472,65 @@ export class LearningStateManager {
         consecutiveSuccesses: newConsecutiveSuccesses,
         exposureCount: newExposure
       });
+
+      // Emit asset events
+      generatedEvents.push({
+        id: LocalRepository.generateStableId('evt'),
+        type: 'asset_exposed',
+        timestamp: now,
+        learnerId,
+        sessionId: summary.id,
+        sourceId: summary.sourceId,
+        assetId: key,
+        skill,
+        schemaVersion: 3,
+        payload: {
+          assetTerm: targetTerm,
+          assetType,
+          status: newStatus,
+          exposureCount: newExposure
+        }
+      });
+
+      if (!item.isCorrect) {
+        generatedEvents.push({
+          id: LocalRepository.generateStableId('evt'),
+          type: 'asset_failed',
+          timestamp: now,
+          learnerId,
+          sessionId: summary.id,
+          sourceId: summary.sourceId,
+          assetId: key,
+          skill,
+          schemaVersion: 3,
+          payload: {
+            assetTerm: targetTerm,
+            assetType,
+            consecutiveErrors: newConsecutiveErrors,
+            errorCategory: this.classifyErrorCategory(ex.type, skill),
+            learnerResponse: item.userAnswer,
+            expectedAnswer: ex.correctAnswer
+          }
+        });
+      } else if (newStatus === 'strong' && previousStatus !== 'strong') {
+        generatedEvents.push({
+          id: LocalRepository.generateStableId('evt'),
+          type: 'asset_mastered',
+          timestamp: now,
+          learnerId,
+          sessionId: summary.id,
+          sourceId: summary.sourceId,
+          assetId: key,
+          skill,
+          schemaVersion: 3,
+          payload: {
+            assetTerm: targetTerm,
+            assetType,
+            consecutiveSuccesses: newConsecutiveSuccesses,
+            confidence
+          }
+        });
+      }
     });
 
     // Update Skill States deterministically
@@ -404,6 +581,38 @@ export class LearningStateManager {
 
     this.saveLearningState(state);
 
+    // Session Completed Event
+    generatedEvents.push({
+      id: LocalRepository.generateStableId('evt'),
+      type: 'session_completed',
+      timestamp: now,
+      learnerId,
+      sessionId: summary.id,
+      sourceId: summary.sourceId,
+      schemaVersion: 3,
+      payload: {
+        sessionId: summary.id,
+        sourceId: summary.sourceId,
+        durationMinutes: summary.durationMinutes,
+        actualDurationSeconds: summary.actualDurationSeconds || summary.durationMinutes * 60,
+        totalExercises: summary.totalExercises,
+        correctExercises: summary.correctExercises,
+        masteryLevel: summary.objectiveAchievement?.level || 'developing',
+        scorePercent: summary.objectiveAchievement?.scorePercent ?? (summary.totalExercises > 0 ? Math.round((summary.correctExercises / summary.totalExercises) * 100) : 0),
+        assetsUpdatedCount: changes.length
+      }
+    });
+
+    // Record all events
+    LocalRepository.recordLearningEvents(generatedEvents);
+
+    // Sync LearnerModel
+    const currentModel = LocalRepository.getLearnerModel(learnerId);
+    if (currentModel) {
+      LocalRepository.saveLearnerModel(currentModel);
+    }
+
     return { updatedState: state, changes };
   }
 }
+

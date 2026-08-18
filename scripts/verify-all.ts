@@ -9,7 +9,7 @@ import { LearningStateManager } from '../src/services/learningState';
 import { LocalRepository } from '../src/services/store';
 import { OllamaProvider } from '../src/services/ai/OllamaProvider';
 import { CalibrationRunner } from '../src/services/calibration/learningScenarios';
-import { Exercise, SessionActivity, LearningState, Source, UserProfile } from '../src/types';
+import { Exercise, SessionActivity, LearningState, Source, UserProfile, SessionSummary } from '../src/types';
 import fs from 'fs';
 import path from 'path';
 
@@ -680,6 +680,236 @@ async function runAllVerifications() {
       sc.passed ? 'Passed' : `Failed: ${sc.assertions.filter((a) => !a.passed).map((a) => a.name).join(', ')}`
     );
   }
+
+  // =========================================================================
+  // 9. LEARNER MODEL, ERROR MEMORY & LEARNING EVENTS VERIFICATION (Phase 2)
+  // =========================================================================
+  const sec9 = '9. Learner Model, Error Memory & Learning Events (Phase 2)';
+
+  // Test 9.1: LearnerModel composition and structure
+  LocalRepository.resetAllLearnerData();
+  const testProfile9: UserProfile = {
+    level: 'B1',
+    levelSource: 'self_assessed',
+    interfaceLanguage: 'en',
+    learningLanguage: 'en',
+    supportLanguage: 'en',
+    goals: ['professional'],
+    challenges: [],
+    interests: ['technology', 'business'],
+    customInterests: [],
+    skillPriorities: [],
+    contentPreferences: [],
+    difficultyPreference: 'balanced',
+    languageSupportPreference: 'mostly_english',
+    grammarPreference: 'implicit',
+    onboardingCompleted: true,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  LocalRepository.saveUserProfile(testProfile9);
+  const learnerModel = LocalRepository.getLearnerModel();
+
+  recordTest(
+    sec9,
+    'LearnerModel initializes with complete aggregate domain structure',
+    Boolean(
+      learnerModel &&
+      learnerModel.id &&
+      learnerModel.profile?.level === 'B1' &&
+      learnerModel.skillStates?.vocabulary &&
+      learnerModel.assetStates &&
+      learnerModel.errorMemory?.records &&
+      learnerModel.learningHistory &&
+      learnerModel.metadata?.schemaVersion === 3 &&
+      learnerModel.schemaVersion === 3
+    ),
+    'Complete LearnerModel structure with schemaVersion 3',
+    learnerModel ? `Valid (schemaVersion: ${learnerModel.schemaVersion})` : 'null'
+  );
+
+  // Test 9.2: ErrorMemory recording and category aggregation
+  const err1 = LocalRepository.recordError({
+    learnerId: learnerModel!.id,
+    assetTerm: 'resilience',
+    assetType: 'vocabulary',
+    errorCategory: 'lexical',
+    learnerResponse: 'flexibility',
+    expectedAnswer: 'resilience',
+    unassisted: false,
+    attemptsCount: 2
+  });
+
+  const err2 = LocalRepository.recordError({
+    learnerId: learnerModel!.id,
+    errorCategory: 'grammatical',
+    learnerResponse: 'he go',
+    expectedAnswer: 'he goes',
+    unassisted: false,
+    attemptsCount: 1
+  });
+
+  const err3 = LocalRepository.recordError({
+    learnerId: learnerModel!.id,
+    errorCategory: 'speaking',
+    learnerResponse: 'pafways',
+    expectedAnswer: 'pathways',
+    unassisted: false,
+    attemptsCount: 1
+  });
+
+  const errorMemory = LocalRepository.getErrorMemory(learnerModel!.id);
+  recordTest(
+    sec9,
+    'ErrorMemory aggregates categorized errors and counts accurately',
+    errorMemory.records.length === 3 &&
+    errorMemory.categoryCounts.lexical === 1 &&
+    errorMemory.categoryCounts.grammatical === 1 &&
+    errorMemory.categoryCounts.speaking === 1 &&
+    errorMemory.categoryCounts.comprehension === 0,
+    '3 records (1 lexical, 1 grammatical, 1 speaking)',
+    `${errorMemory.records.length} records (${errorMemory.categoryCounts.lexical} lex, ${errorMemory.categoryCounts.grammatical} gram, ${errorMemory.categoryCounts.speaking} speak)`
+  );
+
+  // Test 9.3: Learning Events schema emission & persistence
+  LocalRepository.recordLearningEvent({
+    id: LocalRepository.generateStableId('evt'),
+    type: 'source_analyzed',
+    timestamp: Date.now(),
+    learnerId: learnerModel!.id,
+    schemaVersion: 3,
+    payload: {
+      sourceId: 'src_test',
+      title: 'Neural Networks and Deep Focus',
+      wordCount: 120,
+      estimatedLevel: 'B2',
+      vocabularyCount: 8,
+      grammarCount: 3
+    }
+  });
+
+  LocalRepository.recordLearningEvent({
+    id: LocalRepository.generateStableId('evt'),
+    type: 'session_started',
+    timestamp: Date.now(),
+    learnerId: learnerModel!.id,
+    schemaVersion: 3,
+    payload: {
+      sessionId: 'sess_1',
+      sourceId: 'src_test',
+      durationMinutes: 5,
+      totalActivities: 4,
+      objectiveType: 'vocabulary',
+      targetItems: ['resilience', 'neuroplasticity']
+    }
+  });
+
+  const events = LocalRepository.getLearningEvents(learnerModel!.id);
+  recordTest(
+    sec9,
+    'Learning Events persist and retrieve with typed discriminated payloads',
+    events.length >= 2 && events.some(e => e.type === 'source_analyzed') && events.some(e => e.type === 'session_started'),
+    'Events containing source_analyzed and session_started',
+    `Found ${events.length} events (${events.map(e => e.type).join(', ')})`
+  );
+
+  // Test 9.4: End-to-end LearningStateManager session completion event emission
+  const testSessionSummary: SessionSummary = {
+    id: 'sess_e2e_phase2',
+    learnerId: learnerModel!.id,
+    sourceId: 'src_test',
+    sourceTitle: 'Neural Networks',
+    durationMinutes: 5,
+    actualDurationSeconds: 280,
+    totalExercises: 2,
+    correctExercises: 1,
+    completedAt: Date.now(),
+    objective: {
+      id: 'obj_e2e',
+      type: 'vocabulary',
+      title: 'Vocabulary mastery',
+      description: 'Acquiring high impact words',
+      targetItems: ['neuroplasticity', 'resilience']
+    },
+    objectiveAchievement: {
+      level: 'developing',
+      scorePercent: 50,
+      summary: 'Making progress',
+      strongAreas: ['neuroplasticity'],
+      focusAreas: ['resilience'],
+      recommendedNextStep: 'Review developing words'
+    },
+    stageMetrics: [],
+    items: [
+      {
+        activityId: 'act_1',
+        exerciseId: 'ex_1',
+        stage: 'active_retrieval',
+        stageLabel: 'Active Retrieval',
+        pedagogicalIntent: 'Retrieve target term',
+        grammarRequested: false,
+        exercise: {
+          id: 'ex_1',
+          type: 'vocabulary_retrieval',
+          instruction: 'Choose word',
+          prompt: 'The brain ability is called _______',
+          correctAnswer: 'neuroplasticity',
+          explanation: 'Neuroplasticity refers to brain adaptability.'
+        },
+        userAnswer: 'neuroplasticity',
+        isCorrect: true,
+        timeSpentSeconds: 15,
+        targetAssetTerm: 'neuroplasticity'
+      },
+      {
+        activityId: 'act_2',
+        exerciseId: 'ex_2',
+        stage: 'production',
+        stageLabel: 'Spontaneous Production',
+        pedagogicalIntent: 'Produce target term in context',
+        grammarRequested: false,
+        exercise: {
+          id: 'ex_2',
+          type: 'vocabulary_retrieval',
+          instruction: 'Produce sentence',
+          prompt: 'Use resilience',
+          correctAnswer: 'Cognitive resilience is vital.',
+          explanation: 'Resilience means capacity to recover.'
+        },
+        userAnswer: 'I have flexibility.',
+        isCorrect: false,
+        timeSpentSeconds: 20,
+        targetAssetTerm: 'resilience'
+      }
+    ]
+  };
+
+  LocalRepository.saveSessionSummary(testSessionSummary);
+  LearningStateManager.recordSessionResult(testSessionSummary);
+  const updatedEvents = LocalRepository.getLearningEvents(learnerModel!.id);
+  const hasExerciseEvent = updatedEvents.some(e => e.type === 'exercise_completed');
+  const hasAssetExposed = updatedEvents.some(e => e.type === 'asset_exposed');
+  const hasAssetFailed = updatedEvents.some(e => e.type === 'asset_failed');
+  const hasSessionCompleted = updatedEvents.some(e => e.type === 'session_completed');
+
+  recordTest(
+    sec9,
+    'Session execution emits full lifecycle events (exercise, asset_exposed, asset_failed, session_completed)',
+    hasExerciseEvent && hasAssetExposed && hasAssetFailed && hasSessionCompleted,
+    'All 4 lifecycle event types emitted',
+    `exercise: ${hasExerciseEvent}, exposed: ${hasAssetExposed}, failed: ${hasAssetFailed}, session_completed: ${hasSessionCompleted}`
+  );
+
+  // Test 9.5: Schema Migration idempotency
+  LocalRepository.initialize();
+  const migratedModel = LocalRepository.getLearnerModel(learnerModel!.id);
+  recordTest(
+    sec9,
+    'Schema migration maintains integrity and updates LearnerModel aggregate state',
+    Boolean(migratedModel && migratedModel.schemaVersion === 3 && migratedModel.learningHistory.totalSessionsCompleted >= 1),
+    'Migrated model with totalSessionsCompleted >= 1 and schemaVersion 3',
+    migratedModel ? `Sessions: ${migratedModel.learningHistory.totalSessionsCompleted}, schemaVersion: ${migratedModel.schemaVersion}` : 'null'
+  );
 
   // =========================================================================
   // PRINT SUMMARY REPORT

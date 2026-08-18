@@ -891,8 +891,8 @@ export class CalibrationRunner {
     const assertionsK = [
       {
         name: 'Persistent Learner entity is generated with stable identifier and schema version',
-        passed: !!createdLearner.id && createdLearner.id.startsWith('lrn_') && createdLearner.schemaVersion === 2 && retrievedLearner?.id === createdLearner.id,
-        expected: 'Learner id starts with lrn_, schemaVersion: 2',
+        passed: !!createdLearner.id && createdLearner.id.startsWith('lrn_') && (createdLearner.schemaVersion >= 2) && retrievedLearner?.id === createdLearner.id,
+        expected: 'Learner id starts with lrn_, schemaVersion: >= 2',
         actual: `id: ${createdLearner.id}, schemaVersion: ${createdLearner.schemaVersion}`
       },
       {

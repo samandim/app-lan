@@ -488,3 +488,213 @@ export interface NextLearningDecision {
   availableDurations: number[];
   priorityRank: number;
 }
+
+// ---------------------------------------------------------------------------
+// Learner Model & Error Memory Domain Models (Phase 2 Learner Foundation)
+// ---------------------------------------------------------------------------
+
+export type ErrorCategory =
+  | 'unknown'
+  | 'lexical'
+  | 'grammatical'
+  | 'comprehension'
+  | 'speaking'
+  | 'listening';
+
+export interface ErrorRecord {
+  id: string;
+  timestamp: number;
+  learnerId: string;
+  assetId?: string;
+  assetTerm?: string;
+  assetType?: AssetType;
+  sessionId?: string;
+  sourceId?: string;
+  activityId?: string;
+  exerciseId?: string;
+  exerciseType?: ExerciseType;
+  errorCategory: ErrorCategory;
+  learnerResponse?: string;
+  expectedAnswer?: string;
+  feedbackMessage?: string;
+  unassisted?: boolean;
+  attemptsCount?: number;
+}
+
+export interface ErrorMemoryState {
+  learnerId: string;
+  records: ErrorRecord[];
+  categoryCounts: Record<ErrorCategory, number>;
+  lastErrorAt?: number;
+  updatedAt: number;
+}
+
+export interface LearningHistorySummary {
+  totalSessionsCompleted: number;
+  totalTimeSpentSeconds: number;
+  lastSessionAt?: number;
+  streakDays: number;
+  lastPracticedDate?: string;
+  recentSessionIds: string[];
+}
+
+export interface LearnerMetadata {
+  schemaVersion: number;
+  createdAt: number;
+  updatedAt: number;
+  lastActiveAt: number;
+  clientVersion?: string;
+}
+
+export interface LearnerModel {
+  id: string;
+  profile: UserProfile;
+  skillStates: Record<SkillType, SkillState>;
+  assetStates: Record<string, AssetState>;
+  errorMemory: ErrorMemoryState;
+  learningHistory: LearningHistorySummary;
+  metadata: LearnerMetadata;
+  schemaVersion: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Learning Events Domain Models (Phase 2 Architectural Foundation)
+// ---------------------------------------------------------------------------
+
+export type LearningEventType =
+  | 'source_analyzed'
+  | 'session_started'
+  | 'exercise_completed'
+  | 'asset_exposed'
+  | 'asset_mastered'
+  | 'asset_failed'
+  | 'speaking_attempt'
+  | 'session_completed';
+
+export interface BaseLearningEvent {
+  id: string;
+  type: LearningEventType;
+  timestamp: number;
+  learnerId: string;
+  sessionId?: string;
+  sourceId?: string;
+  assetId?: string;
+  skill?: SkillType;
+  schemaVersion: number;
+}
+
+export interface SourceAnalyzedEvent extends BaseLearningEvent {
+  type: 'source_analyzed';
+  payload: {
+    sourceId: string;
+    title: string;
+    wordCount: number;
+    estimatedLevel?: EnglishLevel;
+    vocabularyCount: number;
+    grammarCount: number;
+  };
+}
+
+export interface SessionStartedEvent extends BaseLearningEvent {
+  type: 'session_started';
+  payload: {
+    sessionId: string;
+    sourceId?: string;
+    durationMinutes: number;
+    totalActivities: number;
+    objectiveType: ObjectiveType;
+    targetItems: string[];
+  };
+}
+
+export interface ExerciseCompletedEvent extends BaseLearningEvent {
+  type: 'exercise_completed';
+  payload: {
+    sessionId: string;
+    activityId: string;
+    exerciseId: string;
+    exerciseType: ExerciseType;
+    stage: PedagogicalStage;
+    isCorrect: boolean;
+    score: number;
+    unassisted: boolean;
+    attemptsCount: number;
+    timeSpentSeconds: number;
+    targetAssetTerm?: string;
+    targetAssetType?: AssetType;
+  };
+}
+
+export interface AssetExposedEvent extends BaseLearningEvent {
+  type: 'asset_exposed';
+  payload: {
+    assetTerm: string;
+    assetType: AssetType;
+    status: AssetStateStatus;
+    exposureCount: number;
+  };
+}
+
+export interface AssetMasteredEvent extends BaseLearningEvent {
+  type: 'asset_mastered';
+  payload: {
+    assetTerm: string;
+    assetType: AssetType;
+    consecutiveSuccesses: number;
+    confidence: number;
+  };
+}
+
+export interface AssetFailedEvent extends BaseLearningEvent {
+  type: 'asset_failed';
+  payload: {
+    assetTerm: string;
+    assetType: AssetType;
+    consecutiveErrors: number;
+    errorCategory: ErrorCategory;
+    learnerResponse?: string;
+    expectedAnswer?: string;
+  };
+}
+
+export interface SpeakingAttemptEvent extends BaseLearningEvent {
+  type: 'speaking_attempt';
+  payload: {
+    sessionId: string;
+    exerciseId: string;
+    targetText: string;
+    transcript?: string;
+    durationMs?: number;
+    coverage?: number;
+    evaluationAvailable: boolean;
+    quality: EvaluationStatus;
+  };
+}
+
+export interface SessionCompletedEvent extends BaseLearningEvent {
+  type: 'session_completed';
+  payload: {
+    sessionId: string;
+    sourceId?: string;
+    durationMinutes: number;
+    actualDurationSeconds: number;
+    totalExercises: number;
+    correctExercises: number;
+    masteryLevel: MasteryLevel;
+    scorePercent: number;
+    assetsUpdatedCount: number;
+  };
+}
+
+export type LearningEvent =
+  | SourceAnalyzedEvent
+  | SessionStartedEvent
+  | ExerciseCompletedEvent
+  | AssetExposedEvent
+  | AssetMasteredEvent
+  | AssetFailedEvent
+  | SpeakingAttemptEvent
+  | SessionCompletedEvent;
+

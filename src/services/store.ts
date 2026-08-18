@@ -11,10 +11,17 @@ import {
   SkillState,
   Learner,
   SessionState,
-  ActiveSessionRecord
+  ActiveSessionRecord,
+  ErrorCategory,
+  ErrorRecord,
+  ErrorMemoryState,
+  LearningHistorySummary,
+  LearnerMetadata,
+  LearnerModel,
+  LearningEvent
 } from '../types';
 
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 const STORAGE_KEY_SCHEMA_VERSION = 'adaptive_english_schema_version_v1';
 const STORAGE_KEY_LEARNER = 'adaptive_english_learner_v1';
@@ -25,6 +32,9 @@ const STORAGE_KEY_USER_PROFILE = 'adaptive_english_user_profile_v1';
 const STORAGE_KEY_LANGUAGE = 'adaptive_english_lang_v1';
 const STORAGE_KEY_ONBOARDING_DRAFT = 'adaptive_english_onboarding_draft_v1';
 const STORAGE_KEY_LEARNING_STATE = 'adaptive_english_learning_state_v1';
+const STORAGE_KEY_LEARNER_MODEL = 'adaptive_english_learner_model_v1';
+const STORAGE_KEY_ERROR_MEMORY = 'adaptive_english_error_memory_v1';
+const STORAGE_KEY_LEARNING_EVENTS = 'adaptive_english_learning_events_v1';
 
 class MemoryStorage {
   private store: Map<string, string> = new Map();
@@ -156,6 +166,36 @@ export class LocalRepository {
         // Synchronize schema version
         getStorage().setItem(STORAGE_KEY_SCHEMA_VERSION, String(CURRENT_SCHEMA_VERSION));
       }
+
+      // Schema 3 Migration: Ensure LearnerModel and ErrorMemory exist
+      const existingModel = this.safeGetJson<LearnerModel | null>(STORAGE_KEY_LEARNER_MODEL, null);
+      if (!existingModel && (learner || existingProfile)) {
+        const activeLearnerId = learner?.id || this.generateStableId('lrn');
+        const activeProfile = learner?.profile || existingProfile!;
+        const learningState = this.getLearningState(activeLearnerId);
+        const errorMemory = this.getErrorMemory(activeLearnerId);
+        const historySummary = this.getLearningHistorySummary(activeLearnerId);
+        const now = Date.now();
+
+        const model: LearnerModel = {
+          id: activeLearnerId,
+          profile: activeProfile,
+          skillStates: learningState.skillStates,
+          assetStates: learningState.assetStates,
+          errorMemory,
+          learningHistory: historySummary,
+          metadata: {
+            schemaVersion: CURRENT_SCHEMA_VERSION,
+            createdAt: learner?.createdAt || activeProfile.createdAt || now,
+            updatedAt: now,
+            lastActiveAt: now
+          },
+          schemaVersion: CURRENT_SCHEMA_VERSION,
+          createdAt: learner?.createdAt || activeProfile.createdAt || now,
+          updatedAt: now
+        };
+        getStorage().setItem(STORAGE_KEY_LEARNER_MODEL, JSON.stringify(model));
+      }
     } catch (e) {
       console.error('[LocalRepository] Initialization error:', e);
     }
@@ -278,6 +318,19 @@ export class LocalRepository {
         getStorage().setItem(STORAGE_KEY_LEARNER, JSON.stringify(updatedLearner));
       } catch (e) {
         console.error('[LocalRepository] Failed to sync updated profile to learner:', e);
+      }
+    } else {
+      const newLearner: Learner = {
+        id: this.generateStableId('lrn'),
+        createdAt: now,
+        updatedAt: now,
+        profile: updated,
+        schemaVersion: CURRENT_SCHEMA_VERSION
+      };
+      try {
+        getStorage().setItem(STORAGE_KEY_LEARNER, JSON.stringify(newLearner));
+      } catch (e) {
+        console.error('[LocalRepository] Failed to create initial learner from profile:', e);
       }
     }
 
@@ -668,6 +721,345 @@ export class LocalRepository {
   }
 
   // ---------------------------------------------------------------------------
+  // Error Memory Persistence (Phase 2 Learner Foundation)
+  // ---------------------------------------------------------------------------
+
+  public static getErrorMemory(learnerId?: string): ErrorMemoryState {
+    const currentLearnerId = learnerId || this.getLearner()?.id || 'learner_default';
+    const defaultMemory: ErrorMemoryState = {
+      learnerId: currentLearnerId,
+      records: [],
+      categoryCounts: {
+        unknown: 0,
+        lexical: 0,
+        grammatical: 0,
+        comprehension: 0,
+        speaking: 0,
+        listening: 0
+      },
+      updatedAt: Date.now()
+    };
+
+    try {
+      const parsed = this.safeGetJson<any>(STORAGE_KEY_ERROR_MEMORY, null);
+      if (!parsed) return defaultMemory;
+
+      const records: ErrorRecord[] = Array.isArray(parsed.records) ? parsed.records : [];
+      const categoryCounts: Record<ErrorCategory, number> = {
+        unknown: 0,
+        lexical: 0,
+        grammatical: 0,
+        comprehension: 0,
+        speaking: 0,
+        listening: 0,
+        ...(parsed.categoryCounts || {})
+      };
+
+      return {
+        learnerId: parsed.learnerId && parsed.learnerId !== 'local_learner' ? parsed.learnerId : currentLearnerId,
+        records,
+        categoryCounts,
+        lastErrorAt: typeof parsed.lastErrorAt === 'number' ? parsed.lastErrorAt : undefined,
+        updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now()
+      };
+    } catch {
+      return defaultMemory;
+    }
+  }
+
+  public static saveErrorMemory(errorMemory: ErrorMemoryState): void {
+    try {
+      const currentLearnerId = errorMemory.learnerId && errorMemory.learnerId !== 'local_learner'
+        ? errorMemory.learnerId
+        : (this.getLearner()?.id || 'learner_default');
+
+      // Cap records at latest 200 to prevent unbounded growth in localStorage
+      const cappedRecords = (errorMemory.records || []).slice(0, 200);
+
+      const categoryCounts: Record<ErrorCategory, number> = {
+        unknown: 0,
+        lexical: 0,
+        grammatical: 0,
+        comprehension: 0,
+        speaking: 0,
+        listening: 0
+      };
+
+      cappedRecords.forEach(r => {
+        const cat = r.errorCategory || 'unknown';
+        categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+      });
+
+      const updated: ErrorMemoryState = {
+        ...errorMemory,
+        learnerId: currentLearnerId,
+        records: cappedRecords,
+        categoryCounts,
+        updatedAt: Date.now()
+      };
+
+      getStorage().setItem(STORAGE_KEY_ERROR_MEMORY, JSON.stringify(updated));
+    } catch (e) {
+      console.error('[LocalRepository] Failed to save error memory:', e);
+    }
+  }
+
+  public static recordError(
+    errorData: Omit<ErrorRecord, 'id' | 'timestamp' | 'learnerId'> & {
+      id?: string;
+      timestamp?: number;
+      learnerId?: string;
+    }
+  ): ErrorRecord {
+    const learnerId = errorData.learnerId || this.getLearner()?.id || 'learner_default';
+    const now = errorData.timestamp || Date.now();
+    const errorRecord: ErrorRecord = {
+      id: errorData.id || this.generateStableId('err'),
+      timestamp: now,
+      learnerId,
+      assetId: errorData.assetId,
+      assetTerm: errorData.assetTerm,
+      assetType: errorData.assetType,
+      sessionId: errorData.sessionId,
+      sourceId: errorData.sourceId,
+      activityId: errorData.activityId,
+      exerciseId: errorData.exerciseId,
+      exerciseType: errorData.exerciseType,
+      errorCategory: errorData.errorCategory || 'unknown',
+      learnerResponse: errorData.learnerResponse,
+      expectedAnswer: errorData.expectedAnswer,
+      feedbackMessage: errorData.feedbackMessage,
+      unassisted: errorData.unassisted,
+      attemptsCount: errorData.attemptsCount
+    };
+
+    try {
+      const memory = this.getErrorMemory(learnerId);
+      const records = [errorRecord, ...memory.records].slice(0, 200);
+      const categoryCounts = { ...memory.categoryCounts };
+      const cat = errorRecord.errorCategory || 'unknown';
+      categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+
+      const updatedMemory: ErrorMemoryState = {
+        learnerId,
+        records,
+        categoryCounts,
+        lastErrorAt: now,
+        updatedAt: now
+      };
+
+      this.saveErrorMemory(updatedMemory);
+    } catch (e) {
+      console.error('[LocalRepository] Failed to record error in error memory:', e);
+    }
+
+    return errorRecord;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Learning History Summary Calculation
+  // ---------------------------------------------------------------------------
+
+  public static getLearningHistorySummary(learnerId?: string): LearningHistorySummary {
+    const currentLearnerId = learnerId || this.getLearner()?.id;
+    const sessions = this.getSessionHistory(currentLearnerId);
+
+    let totalTimeSpentSeconds = 0;
+    let lastSessionAt: number | undefined;
+    const recentSessionIds: string[] = [];
+
+    const practicedDates = new Set<string>();
+
+    sessions.forEach(s => {
+      totalTimeSpentSeconds += s.actualDurationSeconds || (s.durationMinutes * 60);
+      if (!lastSessionAt || s.completedAt > lastSessionAt) {
+        lastSessionAt = s.completedAt;
+      }
+      if (s.id) {
+        recentSessionIds.push(s.id);
+      }
+      if (s.completedAt) {
+        const dateStr = new Date(s.completedAt).toISOString().split('T')[0];
+        practicedDates.add(dateStr);
+      }
+    });
+
+    let streakDays = 0;
+    const today = new Date().toISOString().split('T')[0];
+    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+
+    const checkDate = practicedDates.has(today) ? today : (practicedDates.has(yesterday) ? yesterday : null);
+
+    if (checkDate) {
+      let currentDateObj = new Date(checkDate);
+      while (practicedDates.has(currentDateObj.toISOString().split('T')[0])) {
+        streakDays++;
+        currentDateObj = new Date(currentDateObj.getTime() - 86400000);
+      }
+    }
+
+    const lastPracticedDate = lastSessionAt
+      ? new Date(lastSessionAt).toISOString().split('T')[0]
+      : undefined;
+
+    return {
+      totalSessionsCompleted: sessions.length,
+      totalTimeSpentSeconds,
+      lastSessionAt,
+      streakDays,
+      lastPracticedDate,
+      recentSessionIds: recentSessionIds.slice(0, 10)
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Learner Model Composition & Persistence (Phase 2 Central Learner Model)
+  // ---------------------------------------------------------------------------
+
+  public static getLearnerModel(learnerId?: string): LearnerModel | null {
+    this.initialize();
+    const learner = this.getLearner();
+    const currentLearnerId = learnerId || learner?.id;
+    if (!learner && !currentLearnerId) return null;
+
+    const profile = learner?.profile || this.getUserProfile();
+    if (!profile) return null;
+
+    const id = currentLearnerId || learner?.id || this.generateStableId('lrn');
+    const learningState = this.getLearningState(id);
+    const errorMemory = this.getErrorMemory(id);
+    const historySummary = this.getLearningHistorySummary(id);
+    const now = Date.now();
+
+    const storedModel = this.safeGetJson<LearnerModel | null>(STORAGE_KEY_LEARNER_MODEL, null);
+    if (storedModel && storedModel.id === id) {
+      return {
+        ...storedModel,
+        profile: { ...storedModel.profile, ...profile },
+        skillStates: learningState.skillStates,
+        assetStates: learningState.assetStates,
+        errorMemory,
+        learningHistory: historySummary,
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+        updatedAt: now
+      };
+    }
+
+    const newModel: LearnerModel = {
+      id,
+      profile,
+      skillStates: learningState.skillStates,
+      assetStates: learningState.assetStates,
+      errorMemory,
+      learningHistory: historySummary,
+      metadata: {
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+        createdAt: learner?.createdAt || profile.createdAt || now,
+        updatedAt: now,
+        lastActiveAt: now
+      },
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      createdAt: learner?.createdAt || profile.createdAt || now,
+      updatedAt: now
+    };
+
+    return newModel;
+  }
+
+  public static saveLearnerModel(model: LearnerModel): void {
+    try {
+      const now = Date.now();
+      const updatedModel: LearnerModel = {
+        ...model,
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+        updatedAt: now,
+        metadata: {
+          ...model.metadata,
+          schemaVersion: CURRENT_SCHEMA_VERSION,
+          updatedAt: now,
+          lastActiveAt: now
+        }
+      };
+
+      getStorage().setItem(STORAGE_KEY_LEARNER_MODEL, JSON.stringify(updatedModel));
+
+      // Backward-compatible sync with existing stores
+      if (updatedModel.profile) {
+        getStorage().setItem(STORAGE_KEY_USER_PROFILE, JSON.stringify(updatedModel.profile));
+        getStorage().setItem(STORAGE_KEY_LANGUAGE, updatedModel.profile.interfaceLanguage);
+        const learner: Learner = {
+          id: updatedModel.id,
+          createdAt: updatedModel.createdAt,
+          updatedAt: now,
+          profile: updatedModel.profile,
+          schemaVersion: CURRENT_SCHEMA_VERSION
+        };
+        getStorage().setItem(STORAGE_KEY_LEARNER, JSON.stringify(learner));
+      }
+
+      if (updatedModel.assetStates && updatedModel.skillStates) {
+        const learningState: LearningState = {
+          learnerId: updatedModel.id,
+          assetStates: updatedModel.assetStates,
+          skillStates: updatedModel.skillStates,
+          totalSessionsCompleted: updatedModel.learningHistory?.totalSessionsCompleted || 0,
+          lastSessionAt: updatedModel.learningHistory?.lastSessionAt,
+          updatedAt: now
+        };
+        getStorage().setItem(STORAGE_KEY_LEARNING_STATE, JSON.stringify(learningState));
+      }
+
+      if (updatedModel.errorMemory) {
+        this.saveErrorMemory(updatedModel.errorMemory);
+      }
+    } catch (e) {
+      console.error('[LocalRepository] Failed to save learner model:', e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Learning Events Persistence (Phase 2 Event Foundation)
+  // ---------------------------------------------------------------------------
+
+  public static getLearningEvents(learnerId?: string, limit = 100): LearningEvent[] {
+    try {
+      const currentLearnerId = learnerId || this.getLearner()?.id;
+      const allEvents = this.safeGetJson<LearningEvent[]>(STORAGE_KEY_LEARNING_EVENTS, []);
+      if (!Array.isArray(allEvents)) return [];
+
+      let filtered = allEvents;
+      if (currentLearnerId) {
+        filtered = allEvents.filter(e => !e.learnerId || e.learnerId === currentLearnerId);
+      }
+
+      return filtered.slice(0, limit);
+    } catch {
+      return [];
+    }
+  }
+
+  public static recordLearningEvent(event: LearningEvent): void {
+    try {
+      const allEvents = this.safeGetJson<LearningEvent[]>(STORAGE_KEY_LEARNING_EVENTS, []);
+      const updated = [event, ...allEvents].slice(0, 300);
+      getStorage().setItem(STORAGE_KEY_LEARNING_EVENTS, JSON.stringify(updated));
+    } catch (e) {
+      console.error('[LocalRepository] Failed to record learning event:', e);
+    }
+  }
+
+  public static recordLearningEvents(events: LearningEvent[]): void {
+    if (!events || events.length === 0) return;
+    try {
+      const allEvents = this.safeGetJson<LearningEvent[]>(STORAGE_KEY_LEARNING_EVENTS, []);
+      const updated = [...events, ...allEvents].slice(0, 300);
+      getStorage().setItem(STORAGE_KEY_LEARNING_EVENTS, JSON.stringify(updated));
+    } catch (e) {
+      console.error('[LocalRepository] Failed to record learning events:', e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Complete Reset of All Learner Data
   // ---------------------------------------------------------------------------
 
@@ -678,6 +1070,9 @@ export class LocalRepository {
       getStorage().removeItem(STORAGE_KEY_SOURCES);
       getStorage().removeItem(STORAGE_KEY_SESSIONS);
       getStorage().removeItem(STORAGE_KEY_LEARNING_STATE);
+      getStorage().removeItem(STORAGE_KEY_LEARNER_MODEL);
+      getStorage().removeItem(STORAGE_KEY_ERROR_MEMORY);
+      getStorage().removeItem(STORAGE_KEY_LEARNING_EVENTS);
       getStorage().removeItem(STORAGE_KEY_ACTIVE_SESSION);
       getStorage().removeItem(STORAGE_KEY_ONBOARDING_DRAFT);
       getStorage().removeItem(STORAGE_KEY_LANGUAGE);

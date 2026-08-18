@@ -267,6 +267,9 @@ export default function App() {
       LocalRepository.saveActiveSession(newSessionState, currentLearnerId);
       setActiveSessionRecord(LocalRepository.getActiveSession(currentLearnerId));
 
+      // Emit session_started event
+      SessionEngine.recordSessionStarted(plan, currentLearnerId);
+
       setCurrentScreen('session');
     } catch (err) {
       console.error('Failed to build session plan:', err);

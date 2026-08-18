@@ -35,6 +35,8 @@ const STORAGE_KEY_LEARNING_STATE = 'adaptive_english_learning_state_v1';
 const STORAGE_KEY_LEARNER_MODEL = 'adaptive_english_learner_model_v1';
 const STORAGE_KEY_ERROR_MEMORY = 'adaptive_english_error_memory_v1';
 const STORAGE_KEY_LEARNING_EVENTS = 'adaptive_english_learning_events_v1';
+const STORAGE_KEY_PROCESSED_SESSIONS = 'adaptive_english_processed_sessions_v1';
+const STORAGE_KEY_EVENT_SEQ = 'adaptive_english_event_seq_v1';
 
 class MemoryStorage {
   private store: Map<string, string> = new Map();
@@ -402,7 +404,7 @@ export class LocalRepository {
   ): Source {
     const currentLearnerId = learnerId || this.getLearner()?.id;
     const allSources = this.safeGetJson<Source[]>(STORAGE_KEY_SOURCES, []);
-    const cleanContent = params.content.trim();
+    const cleanContent = (params.content || '').trim();
     const cleanTitle = (params.title || '').trim();
 
     const title = cleanTitle.length > 0
@@ -411,7 +413,7 @@ export class LocalRepository {
 
     const now = Date.now();
     const newSource: Source = {
-      id: `src_${now}_${Math.random().toString(36).substring(2, 7)}`,
+      id: (params as any).id || `src_${now}_${Math.random().toString(36).substring(2, 7)}`,
       learnerId: currentLearnerId,
       type: params.type || 'text',
       title,
@@ -435,12 +437,31 @@ export class LocalRepository {
   }
 
   public static saveSource(
-    title: string,
-    content: string,
+    titleOrSource: string | Partial<Source>,
+    content?: string,
     type: Source['type'] = 'text',
     tags: string[] = []
   ): Source {
-    return this.createSource({ title, content, type, tags });
+    if (typeof titleOrSource === 'object' && titleOrSource !== null) {
+      const srcObj = titleOrSource;
+      const title = srcObj.title || 'Untitled';
+      const text = srcObj.content || (srcObj as any).originalText || '';
+      return this.createSource({
+        id: (srcObj as any).id,
+        title,
+        content: text,
+        type: srcObj.type || type,
+        tags: srcObj.tags || tags,
+        userNotes: srcObj.userNotes,
+        initialStatus: srcObj.analysisStatus
+      } as any, srcObj.learnerId);
+    }
+    return this.createSource({
+      title: typeof titleOrSource === 'string' ? titleOrSource : (titleOrSource.title || 'Untitled'),
+      content: content || '',
+      type,
+      tags
+    });
   }
 
   public static updateSource(id: string, updates: Partial<Source>): Source | null {
@@ -474,10 +495,36 @@ export class LocalRepository {
   }
 
   public static saveSourceAnalysis(sourceId: string, analysis: SourceAnalysis): Source | null {
-    return this.updateSource(sourceId, {
+    const updatedSource = this.updateSource(sourceId, {
       analysis,
       analysisStatus: 'analyzed'
     });
+
+    if (updatedSource) {
+      try {
+        const currentLearnerId = this.getLearner()?.id || 'default_learner';
+        this.recordLearningEvent({
+          id: this.generateStableId('evt'),
+          type: 'source_analyzed',
+          timestamp: Date.now(),
+          learnerId: currentLearnerId,
+          sourceId,
+          schemaVersion: CURRENT_SCHEMA_VERSION,
+          payload: {
+            sourceId,
+            title: updatedSource.title,
+            wordCount: updatedSource.wordCount || 0,
+            estimatedLevel: analysis.estimatedLevel,
+            vocabularyCount: analysis.vocabulary?.length || 0,
+            grammarCount: analysis.grammarPatterns?.length || 0
+          }
+        });
+      } catch (e) {
+        console.error('[LocalRepository] Failed to record source_analyzed event:', e);
+      }
+    }
+
+    return updatedSource;
   }
 
   public static deleteSource(id: string): boolean {
@@ -1018,10 +1065,48 @@ export class LocalRepository {
   }
 
   // ---------------------------------------------------------------------------
-  // Learning Events Persistence (Phase 2 Event Foundation)
+  // Learning Events Persistence (Phase 3 Learning Event Pipeline)
   // ---------------------------------------------------------------------------
 
-  public static getLearningEvents(learnerId?: string, limit = 100): LearningEvent[] {
+  public static getNextEventSequenceNumber(): number {
+    try {
+      const current = Number(getStorage().getItem(STORAGE_KEY_EVENT_SEQ) || '0');
+      const next = current + 1;
+      getStorage().setItem(STORAGE_KEY_EVENT_SEQ, String(next));
+      return next;
+    } catch {
+      return Date.now();
+    }
+  }
+
+  public static isSessionProcessed(sessionId: string): boolean {
+    if (!sessionId) return false;
+    try {
+      const set = this.safeGetJson<string[]>(STORAGE_KEY_PROCESSED_SESSIONS, []);
+      return set.includes(sessionId);
+    } catch {
+      return false;
+    }
+  }
+
+  public static markSessionProcessed(sessionId: string): void {
+    if (!sessionId) return;
+    try {
+      const set = this.safeGetJson<string[]>(STORAGE_KEY_PROCESSED_SESSIONS, []);
+      if (!set.includes(sessionId)) {
+        const updated = [sessionId, ...set].slice(0, 300);
+        getStorage().setItem(STORAGE_KEY_PROCESSED_SESSIONS, JSON.stringify(updated));
+      }
+    } catch (e) {
+      console.error('[LocalRepository] Failed to mark session as processed:', e);
+    }
+  }
+
+  public static getLearningEvents(
+    learnerId?: string,
+    limit = 100,
+    order: 'desc' | 'asc' = 'desc'
+  ): LearningEvent[] {
     try {
       const currentLearnerId = learnerId || this.getLearner()?.id;
       const allEvents = this.safeGetJson<LearningEvent[]>(STORAGE_KEY_LEARNING_EVENTS, []);
@@ -1032,27 +1117,47 @@ export class LocalRepository {
         filtered = allEvents.filter(e => !e.learnerId || e.learnerId === currentLearnerId);
       }
 
-      return filtered.slice(0, limit);
+      // Deterministic sort by timestamp, breaking ties with sequenceNumber
+      const sorted = [...filtered].sort((a, b) => {
+        const timeDiff = a.timestamp - b.timestamp;
+        if (timeDiff !== 0) {
+          return order === 'asc' ? timeDiff : -timeDiff;
+        }
+        const seqDiff = (a.sequenceNumber ?? 0) - (b.sequenceNumber ?? 0);
+        return order === 'asc' ? seqDiff : -seqDiff;
+      });
+
+      return sorted.slice(0, limit);
     } catch {
       return [];
     }
   }
 
   public static recordLearningEvent(event: LearningEvent): void {
-    try {
-      const allEvents = this.safeGetJson<LearningEvent[]>(STORAGE_KEY_LEARNING_EVENTS, []);
-      const updated = [event, ...allEvents].slice(0, 300);
-      getStorage().setItem(STORAGE_KEY_LEARNING_EVENTS, JSON.stringify(updated));
-    } catch (e) {
-      console.error('[LocalRepository] Failed to record learning event:', e);
-    }
+    this.recordLearningEvents([event]);
   }
 
   public static recordLearningEvents(events: LearningEvent[]): void {
     if (!events || events.length === 0) return;
     try {
       const allEvents = this.safeGetJson<LearningEvent[]>(STORAGE_KEY_LEARNING_EVENTS, []);
-      const updated = [...events, ...allEvents].slice(0, 300);
+      const existingIds = new Set(allEvents.map(e => e.id));
+
+      const processedNewEvents: LearningEvent[] = [];
+      for (const ev of events) {
+        if (!ev || existingIds.has(ev.id)) continue;
+        const seq = ev.sequenceNumber !== undefined ? ev.sequenceNumber : this.getNextEventSequenceNumber();
+        processedNewEvents.push({
+          ...ev,
+          sequenceNumber: seq
+        });
+        existingIds.add(ev.id);
+      }
+
+      if (processedNewEvents.length === 0) return;
+
+      // Maintain bounded FIFO retention of up to 500 recent events
+      const updated = [...processedNewEvents, ...allEvents].slice(0, 500);
       getStorage().setItem(STORAGE_KEY_LEARNING_EVENTS, JSON.stringify(updated));
     } catch (e) {
       console.error('[LocalRepository] Failed to record learning events:', e);
@@ -1073,6 +1178,8 @@ export class LocalRepository {
       getStorage().removeItem(STORAGE_KEY_LEARNER_MODEL);
       getStorage().removeItem(STORAGE_KEY_ERROR_MEMORY);
       getStorage().removeItem(STORAGE_KEY_LEARNING_EVENTS);
+      getStorage().removeItem(STORAGE_KEY_PROCESSED_SESSIONS);
+      getStorage().removeItem(STORAGE_KEY_EVENT_SEQ);
       getStorage().removeItem(STORAGE_KEY_ACTIVE_SESSION);
       getStorage().removeItem(STORAGE_KEY_ONBOARDING_DRAFT);
       getStorage().removeItem(STORAGE_KEY_LANGUAGE);

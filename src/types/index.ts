@@ -577,6 +577,7 @@ export interface BaseLearningEvent {
   id: string;
   type: LearningEventType;
   timestamp: number;
+  sequenceNumber?: number;
   learnerId: string;
   sessionId?: string;
   sourceId?: string;

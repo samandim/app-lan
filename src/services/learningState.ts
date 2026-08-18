@@ -225,6 +225,12 @@ export class LearningStateManager {
   } {
     const state = this.getLearningState();
     const learnerId = summary.learnerId || state.learnerId || LocalRepository.getLearner()?.id || 'learner_default';
+
+    // Idempotency guard: prevent duplicate processing of the same completed session
+    if (summary.id && LocalRepository.isSessionProcessed(summary.id)) {
+      return { updatedState: this.getLearningState(learnerId), changes: [] };
+    }
+
     const now = Date.now();
     const changes: AssetStateUpdateResult[] = [];
     const generatedEvents: LearningEvent[] = [];
@@ -605,6 +611,11 @@ export class LearningStateManager {
 
     // Record all events
     LocalRepository.recordLearningEvents(generatedEvents);
+
+    // Mark session as processed to ensure idempotency
+    if (summary.id) {
+      LocalRepository.markSessionProcessed(summary.id);
+    }
 
     // Sync LearnerModel
     const currentModel = LocalRepository.getLearnerModel(learnerId);

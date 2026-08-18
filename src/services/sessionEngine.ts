@@ -764,4 +764,32 @@ export class SessionEngine {
 
     return summary;
   }
+
+  /**
+   * Emits a session_started LearningEvent when a session begins execution.
+   */
+  public static recordSessionStarted(plan: SessionPlan, learnerId?: string): void {
+    try {
+      const currentLearnerId = learnerId || plan.learnerId || LocalRepository.getLearner()?.id || 'learner_default';
+      LocalRepository.recordLearningEvent({
+        id: LocalRepository.generateStableId('evt'),
+        type: 'session_started',
+        timestamp: Date.now(),
+        learnerId: currentLearnerId,
+        sessionId: plan.id,
+        sourceId: plan.sourceId,
+        schemaVersion: 3,
+        payload: {
+          sessionId: plan.id,
+          sourceId: plan.sourceId,
+          durationMinutes: plan.durationMinutes,
+          totalActivities: plan.activities.length,
+          objectiveType: plan.objective.type,
+          targetItems: plan.objective.targetItems || []
+        }
+      });
+    } catch (e) {
+      console.error('[SessionEngine] Failed to record session_started event:', e);
+    }
+  }
 }

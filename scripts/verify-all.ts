@@ -9,7 +9,7 @@ import { LearningStateManager } from '../src/services/learningState';
 import { LocalRepository } from '../src/services/store';
 import { OllamaProvider } from '../src/services/ai/OllamaProvider';
 import { CalibrationRunner } from '../src/services/calibration/learningScenarios';
-import { Exercise, SessionActivity, LearningState, Source, UserProfile, SessionSummary } from '../src/types';
+import { Exercise, SessionActivity, LearningState, Source, UserProfile, SessionSummary, LearningEvent, SourceAnalyzedEvent } from '../src/types';
 import fs from 'fs';
 import path from 'path';
 
@@ -909,6 +909,389 @@ async function runAllVerifications() {
     Boolean(migratedModel && migratedModel.schemaVersion === 3 && migratedModel.learningHistory.totalSessionsCompleted >= 1),
     'Migrated model with totalSessionsCompleted >= 1 and schemaVersion 3',
     migratedModel ? `Sessions: ${migratedModel.learningHistory.totalSessionsCompleted}, schemaVersion: ${migratedModel.schemaVersion}` : 'null'
+  );
+
+  // =========================================================================
+  // 10. LEARNING EVENT PIPELINE VERIFICATION (Phase 3)
+  // =========================================================================
+  const sec10 = '10. Learning Event Pipeline (Phase 3)';
+
+  // Test 10.1: Invariant & Type Completeness across all 8 Event Types
+  const testLearnerId10 = 'learner_pipeline_test';
+  const all8Events: LearningEvent[] = [
+    {
+      id: LocalRepository.generateStableId('evt'),
+      type: 'source_analyzed',
+      timestamp: Date.now(),
+      learnerId: testLearnerId10,
+      sourceId: 'src_doc_1',
+      schemaVersion: 3,
+      payload: {
+        sourceId: 'src_doc_1',
+        title: 'Executive Briefing',
+        wordCount: 350,
+        estimatedLevel: 'B2',
+        vocabularyCount: 12,
+        grammarCount: 4
+      }
+    },
+    {
+      id: LocalRepository.generateStableId('evt'),
+      type: 'session_started',
+      timestamp: Date.now(),
+      learnerId: testLearnerId10,
+      sessionId: 'sess_p3_1',
+      sourceId: 'src_doc_1',
+      schemaVersion: 3,
+      payload: {
+        sessionId: 'sess_p3_1',
+        sourceId: 'src_doc_1',
+        durationMinutes: 10,
+        totalActivities: 5,
+        objectiveType: 'vocabulary',
+        targetItems: ['synergy', 'leverage']
+      }
+    },
+    {
+      id: LocalRepository.generateStableId('evt'),
+      type: 'exercise_completed',
+      timestamp: Date.now(),
+      learnerId: testLearnerId10,
+      sessionId: 'sess_p3_1',
+      sourceId: 'src_doc_1',
+      skill: 'vocabulary',
+      schemaVersion: 3,
+      payload: {
+        sessionId: 'sess_p3_1',
+        activityId: 'act_p3_1',
+        exerciseId: 'ex_p3_1',
+        exerciseType: 'vocabulary_retrieval',
+        stage: 'active_retrieval',
+        isCorrect: true,
+        score: 100,
+        unassisted: true,
+        attemptsCount: 1,
+        timeSpentSeconds: 12,
+        targetAssetTerm: 'synergy',
+        targetAssetType: 'vocabulary'
+      }
+    },
+    {
+      id: LocalRepository.generateStableId('evt'),
+      type: 'speaking_attempt',
+      timestamp: Date.now(),
+      learnerId: testLearnerId10,
+      sessionId: 'sess_p3_1',
+      sourceId: 'src_doc_1',
+      skill: 'speaking',
+      schemaVersion: 3,
+      payload: {
+        sessionId: 'sess_p3_1',
+        exerciseId: 'ex_p3_spk',
+        targetText: 'We must create positive synergy across teams.',
+        transcript: 'We must create positive synergy across teams.',
+        durationMs: 3400,
+        coverage: 1.0,
+        evaluationAvailable: true,
+        quality: 'strong'
+      }
+    },
+    {
+      id: LocalRepository.generateStableId('evt'),
+      type: 'asset_exposed',
+      timestamp: Date.now(),
+      learnerId: testLearnerId10,
+      sessionId: 'sess_p3_1',
+      sourceId: 'src_doc_1',
+      assetId: 'synergy',
+      skill: 'vocabulary',
+      schemaVersion: 3,
+      payload: {
+        assetTerm: 'synergy',
+        assetType: 'vocabulary',
+        status: 'developing',
+        exposureCount: 2
+      }
+    },
+    {
+      id: LocalRepository.generateStableId('evt'),
+      type: 'asset_failed',
+      timestamp: Date.now(),
+      learnerId: testLearnerId10,
+      sessionId: 'sess_p3_1',
+      sourceId: 'src_doc_1',
+      assetId: 'leverage',
+      skill: 'vocabulary',
+      schemaVersion: 3,
+      payload: {
+        assetTerm: 'leverage',
+        assetType: 'vocabulary',
+        consecutiveErrors: 1,
+        errorCategory: 'lexical',
+        learnerResponse: 'levitate',
+        expectedAnswer: 'leverage'
+      }
+    },
+    {
+      id: LocalRepository.generateStableId('evt'),
+      type: 'asset_mastered',
+      timestamp: Date.now(),
+      learnerId: testLearnerId10,
+      sessionId: 'sess_p3_1',
+      sourceId: 'src_doc_1',
+      assetId: 'synergy',
+      skill: 'vocabulary',
+      schemaVersion: 3,
+      payload: {
+        assetTerm: 'synergy',
+        assetType: 'vocabulary',
+        consecutiveSuccesses: 3,
+        confidence: 0.95
+      }
+    },
+    {
+      id: LocalRepository.generateStableId('evt'),
+      type: 'session_completed',
+      timestamp: Date.now(),
+      learnerId: testLearnerId10,
+      sessionId: 'sess_p3_1',
+      sourceId: 'src_doc_1',
+      schemaVersion: 3,
+      payload: {
+        sessionId: 'sess_p3_1',
+        sourceId: 'src_doc_1',
+        durationMinutes: 10,
+        actualDurationSeconds: 480,
+        totalExercises: 5,
+        correctExercises: 4,
+        masteryLevel: 'mastered',
+        scorePercent: 80,
+        assetsUpdatedCount: 2
+      }
+    }
+  ];
+
+  LocalRepository.recordLearningEvents(all8Events);
+  const recordedAll8 = LocalRepository.getLearningEvents(testLearnerId10, 50, 'asc');
+  const distinctTypes = new Set(recordedAll8.map(e => e.type));
+
+  recordTest(
+    sec10,
+    'Pipeline supports all 8 canonical LearningEvent types with schemaVersion 3 and typed payloads',
+    distinctTypes.size === 8,
+    '8 distinct event types',
+    `${distinctTypes.size} distinct event types recorded`
+  );
+
+  // Test 10.2: Monotonic Sequence Ordering
+  const hasValidMonotonicSeq = recordedAll8.every((e, idx) => {
+    if (idx === 0) return typeof e.sequenceNumber === 'number';
+    return (e.sequenceNumber ?? 0) >= (recordedAll8[idx - 1].sequenceNumber ?? 0);
+  });
+
+  recordTest(
+    sec10,
+    'Events receive monotonic sequence numbers and sort deterministically',
+    hasValidMonotonicSeq,
+    'Strictly increasing or non-decreasing sequence numbers',
+    hasValidMonotonicSeq ? 'Monotonic sequence verified' : 'Non-monotonic sequence detected'
+  );
+
+  // Test 10.3: Idempotency protection against duplicate session results
+  const testSessionId10 = 'sess_idempotency_test';
+  const duplicateSummary: SessionSummary = {
+    id: testSessionId10,
+    learnerId: testLearnerId10,
+    sourceId: 'src_doc_1',
+    sourceTitle: 'Executive Briefing',
+    durationMinutes: 5,
+    actualDurationSeconds: 240,
+    totalExercises: 1,
+    correctExercises: 0,
+    completedAt: Date.now(),
+    objective: {
+      id: 'obj_idemp',
+      type: 'vocabulary',
+      title: 'Vocabulary Practice',
+      description: 'Practice terms',
+      targetItems: ['bottleneck']
+    },
+    objectiveAchievement: {
+      level: 'developing',
+      scorePercent: 0,
+      summary: 'Practice needed',
+      strongAreas: [],
+      focusAreas: ['bottleneck'],
+      recommendedNextStep: 'Review terms'
+    },
+    stageMetrics: [],
+    items: [
+      {
+        activityId: 'act_idemp_1',
+        exerciseId: 'ex_idemp_1',
+        stage: 'active_retrieval',
+        stageLabel: 'Active Retrieval',
+        pedagogicalIntent: 'Retrieve term',
+        grammarRequested: false,
+        exercise: {
+          id: 'ex_idemp_1',
+          type: 'vocabulary_retrieval',
+          instruction: 'Type answer',
+          prompt: 'What stops workflow?',
+          correctAnswer: 'bottleneck',
+          explanation: 'A point of congestion.'
+        },
+        userAnswer: 'traffic',
+        isCorrect: false,
+        timeSpentSeconds: 14,
+        targetAssetTerm: 'bottleneck'
+      }
+    ]
+  };
+
+  const initialErrCount = LocalRepository.getErrorMemory(testLearnerId10).records.length;
+  const initialEventCount = LocalRepository.getLearningEvents(testLearnerId10).length;
+
+  // First execution
+  const res1 = LearningStateManager.recordSessionResult(duplicateSummary);
+  const afterFirstErrCount = LocalRepository.getErrorMemory(testLearnerId10).records.length;
+  const afterFirstEventCount = LocalRepository.getLearningEvents(testLearnerId10).length;
+
+  // Duplicate execution of exact same session
+  const res2 = LearningStateManager.recordSessionResult(duplicateSummary);
+  const afterSecondErrCount = LocalRepository.getErrorMemory(testLearnerId10).records.length;
+  const afterSecondEventCount = LocalRepository.getLearningEvents(testLearnerId10).length;
+
+  recordTest(
+    sec10,
+    'Session completion idempotency prevents duplicate events and duplicate error records',
+    afterFirstErrCount === initialErrCount + 1 &&
+    afterSecondErrCount === afterFirstErrCount &&
+    afterSecondEventCount === afterFirstEventCount &&
+    res2.changes.length === 0,
+    'Second run produces 0 changes, 0 duplicate errors, 0 duplicate events',
+    `First run: +${afterFirstErrCount - initialErrCount} errs, +${afterFirstEventCount - initialEventCount} evts; Second run: +${afterSecondErrCount - afterFirstErrCount} errs, +${afterSecondEventCount - afterFirstEventCount} evts`
+  );
+
+  // Test 10.4: Event ID Uniqueness & Deduplication
+  const duplicateEvt: LearningEvent = {
+    id: 'evt_unique_test_123',
+    type: 'asset_exposed',
+    timestamp: Date.now(),
+    learnerId: testLearnerId10,
+    schemaVersion: 3,
+    payload: {
+      assetTerm: 'clarity',
+      assetType: 'vocabulary',
+      status: 'new',
+      exposureCount: 1
+    }
+  };
+
+  LocalRepository.recordLearningEvent(duplicateEvt);
+  const countBeforeDup = LocalRepository.getLearningEvents(testLearnerId10).length;
+  LocalRepository.recordLearningEvent(duplicateEvt); // Duplicate record
+  const countAfterDup = LocalRepository.getLearningEvents(testLearnerId10).length;
+
+  recordTest(
+    sec10,
+    'Event repository deduplicates identical event IDs',
+    countBeforeDup === countAfterDup,
+    `Count unchanged (${countBeforeDup})`,
+    `Before: ${countBeforeDup}, After: ${countAfterDup}`
+  );
+
+  // Test 10.5: Automatic Source Analysis Event Emission
+  const sampleSourceId = 'src_auto_event_test';
+  LocalRepository.saveSource({
+    id: sampleSourceId,
+    title: 'Modern Work Dynamics',
+    content: 'Modern work requires active communication and adaptability.',
+    wordCount: 150,
+    analysisStatus: 'not_analyzed',
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+
+  LocalRepository.saveSourceAnalysis(sampleSourceId, {
+    summary: 'Source about modern work',
+    estimatedLevel: 'B2',
+    vocabulary: [
+      { word: 'adaptability', meaning: 'quality of being able to adjust', example: 'Adaptability is key.' }
+    ],
+    phrases: [],
+    comprehensionQuestions: [],
+    speakingPrompts: [],
+    grammarPatterns: [
+      { pattern: 'requires + gerund/noun', explanation: 'Transitive demand pattern', example: 'Requires active communication.' }
+    ],
+    recommendedFocus: ['vocabulary'],
+    analyzedAt: Date.now()
+  });
+
+  const latestEvents = LocalRepository.getLearningEvents(undefined, 10, 'desc');
+  const sourceAnalyzedEvent = latestEvents.find(e => e.type === 'source_analyzed' && (e as any).payload?.sourceId === sampleSourceId) as SourceAnalyzedEvent | undefined;
+
+  recordTest(
+    sec10,
+    'saveSourceAnalysis automatically records source_analyzed event with accurate metadata',
+    Boolean(
+      sourceAnalyzedEvent &&
+      sourceAnalyzedEvent.type === 'source_analyzed' &&
+      sourceAnalyzedEvent.payload.title === 'Modern Work Dynamics' &&
+      sourceAnalyzedEvent.payload.vocabularyCount === 1 &&
+      sourceAnalyzedEvent.payload.grammarCount === 1
+    ),
+    'source_analyzed event with title "Modern Work Dynamics", vocab=1, grammar=1',
+    sourceAnalyzedEvent ? `Found (${sourceAnalyzedEvent.payload.title}, vocab=${sourceAnalyzedEvent.payload.vocabularyCount})` : 'Not found'
+  );
+
+  // Test 10.6: Error Record and Asset Failed Event Synchronization
+  const failedEvents = LocalRepository.getLearningEvents(testLearnerId10).filter(e => e.type === 'asset_failed');
+  const errRecords = LocalRepository.getErrorMemory(testLearnerId10).records.filter(r => r.assetTerm === 'bottleneck');
+
+  recordTest(
+    sec10,
+    'ErrorRecord and asset_failed event stay strictly aligned in category, term, and expected answer',
+    errRecords.length === 1 &&
+    failedEvents.some(e => e.type === 'asset_failed' && (e as any).payload?.assetTerm === 'bottleneck' && (e as any).payload?.learnerResponse === 'traffic'),
+    'Matched ErrorRecord and asset_failed event for "bottleneck"',
+    `ErrorRecords: ${errRecords.length}, Failed events found: ${failedEvents.filter(e => (e as any).payload?.assetTerm === 'bottleneck').length}`
+  );
+
+  // Test 10.7: Bounded FIFO Event Retention
+  const bulkEvents: LearningEvent[] = [];
+  for (let i = 0; i < 550; i++) {
+    bulkEvents.push({
+      id: `bulk_evt_${i}`,
+      type: 'exercise_completed',
+      timestamp: Date.now() + i,
+      learnerId: 'bulk_learner',
+      schemaVersion: 3,
+      payload: {
+        sessionId: `sess_bulk_${i}`,
+        activityId: `act_${i}`,
+        exerciseId: `ex_${i}`,
+        exerciseType: 'vocabulary_retrieval',
+        stage: 'active_retrieval',
+        isCorrect: true,
+        score: 100,
+        unassisted: true,
+        attemptsCount: 1,
+        timeSpentSeconds: 5
+      }
+    });
+  }
+
+  LocalRepository.recordLearningEvents(bulkEvents);
+  const retainedEvents = LocalRepository.getLearningEvents('bulk_learner', 600);
+
+  recordTest(
+    sec10,
+    'Event storage enforces bounded FIFO retention limit (<= 500 events) without data corruption',
+    retainedEvents.length <= 500 && retainedEvents.length >= 450,
+    'Bounded between 450 and 500 events',
+    `Retained count: ${retainedEvents.length}`
   );
 
   // =========================================================================
